@@ -1,0 +1,52 @@
+:root {
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+}
+
+/* Put the gradient on html — it stretches with the full document height,
+   so it stays visible no matter how far you scroll. */
+html {
+  min-height: 100%;
+  background: linear-gradient(135deg, #f5f0e1 0%, #e8d9b8 40%, #d4c29f 100%);
+  background-attachment: fixed;
+}
+
+body, #root {
+  min-height: 100vh;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  /* Keep body and root transparent so html gradient shows through */
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Chakra UI v3 sets --chakra-colors-bg on the Theme wrapper.
+   Force it to transparent so it never paints white. */
+[data-theme],
+[data-theme="light"] {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+/* Kill all unwanted white/gray backgrounds on Chakra layout elements */
+#root > div,
+main,
+.chakra-container,
+.chakra-box,
+.chakra-vstack,
+.chakra-hstack,
+.chakra-flex,
+.chakra-stack {
+  background: transparent !important;
+}
+
+/* Only actual content cards stay white */
+.chakra-card,
+div[bg="white"],
+div[backgroundColor="white"],
+.box-white,
+.border-solid {
+  background: white !important;
+  border: 1px solid #d4c29f !important;
+  border-radius: 12px;
+}
