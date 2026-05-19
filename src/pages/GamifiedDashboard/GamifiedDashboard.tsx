@@ -38,10 +38,68 @@ type Task = {
   label: string;
   crop: string;
   due: string;
+  // ISO timestamp of the exact scheduled time (for reminder-derived tasks)
+  due_time: string | null;
   done: boolean;
+  // true when the 20-min window closed without the task being marked done
+  failed: boolean;
   priority: 'high' | 'medium' | 'low';
   created_at: string;
 };
+
+// ─── NTP-synced Server Clock ──────────────────────────────────────────────────
+// Fetches the real Philippine national time from WorldTimeAPI.
+// Stores the offset (serverMs - deviceMs) so every subsequent Date.now() call
+// can be corrected without another network round-trip.
+// Falls back to device clock if the fetch fails.
+
+let _ntpOffsetMs = 0;          // server time − device time
+let _ntpSynced   = false;
+
+async function syncNTPClock(): Promise<void> {
+  try {
+    const before = Date.now();
+    const res  = await fetch('https://worldtimeapi.org/api/timezone/Asia/Manila');
+    const after = Date.now();
+    if (!res.ok) return;
+    const data = await res.json();
+    // unixtime is seconds; account for half the round-trip latency
+    const serverMs = data.unixtime * 1000 + (after - before) / 2;
+    _ntpOffsetMs = serverMs - after;
+    _ntpSynced   = true;
+  } catch {
+    // silently keep offset = 0 (device clock)
+  }
+}
+
+/** Returns current server time as a Date, corrected via NTP offset. */
+function serverNow(): Date {
+  return new Date(Date.now() + _ntpOffsetMs);
+}
+
+// ─── Task window helpers ───────────────────────────────────────────────────────
+type TaskWindowState = 'pending' | 'active' | 'expired' | 'done' | 'failed' | 'manual';
+
+const TASK_WINDOW_MS = 10 * 60 * 1000; // ±10 minutes
+
+function getTaskWindowState(task: Task, now: Date): TaskWindowState {
+  if (task.failed) return 'failed';
+  if (task.done)   return 'done';
+  if (!task.due_time) return 'manual';
+  const due   = new Date(task.due_time).getTime();
+  const nowMs = now.getTime();
+  if (nowMs < due - TASK_WINDOW_MS) return 'pending';
+  if (nowMs <= due + TASK_WINDOW_MS) return 'active';
+  return 'expired';
+}
+
+// Build a due_time ISO string from today's HH:MM using server-corrected time
+function buildDueTime(timeStr: string): string {
+  const [h, m] = timeStr.split(':').map(Number);
+  const d = serverNow();
+  d.setHours(h, m, 0, 0);
+  return d.toISOString();
+}
 
 // ─── Almanac notification templates per crop ──────────────────────────────────
 const CROP_NOTIFICATIONS: Record<string, { time: string; message: string }[]> = {
@@ -116,7 +174,7 @@ const CROP_OPTIONS = [
 function getDaysSinceQueued(crop: TrackedCrop): number {
   const queuedAt = new Date(crop.queued_at).getTime();
   const effectivePlanted = queuedAt - crop.initial_day * 86400000;
-  return Math.floor((Date.now() - effectivePlanted) / 86400000);
+  return Math.floor((Date.now() + _ntpOffsetMs - effectivePlanted) / 86400000);
 }
 
 function getCurrentWindow(crop: TrackedCrop): number {
@@ -125,11 +183,10 @@ function getCurrentWindow(crop: TrackedCrop): number {
 
 function isVerificationOpen(crop: TrackedCrop): boolean {
   const window = getCurrentWindow(crop);
-  // Upload window opens on day 3*window, stays open for 24h
   const windowStart = new Date(crop.queued_at).getTime()
     - crop.initial_day * 86400000
     + window * 3 * 86400000;
-  const now = Date.now();
+  const now = Date.now() + _ntpOffsetMs;
   return now >= windowStart && now < windowStart + 86400000 && window > crop.last_verified_window;
 }
 
@@ -584,28 +641,86 @@ const CropCard = ({
   );
 };
 
-// ─── Notifications Panel ──────────────────────────────────────────────────────
-const TodayReminders = ({ crops }: { crops: TrackedCrop[] }) => {
-  const now = new Date();
-  const currentHour = now.getHours();
+// ─── Reminder → Task transfer key (localStorage) ─────────────────────────────
+function getReminderTransferKey(userId: string): string {
+  const today = serverNow().toISOString().slice(0, 10); // YYYY-MM-DD PH time
+  return `agricool_reminder_transferred_${userId}_${today}`;
+}
 
-  const reminders = crops
+function getTransferredReminders(userId: string): Set<string> {
+  try {
+    const raw = localStorage.getItem(getReminderTransferKey(userId));
+    return new Set(raw ? JSON.parse(raw) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markReminderTransferred(userId: string, key: string) {
+  try {
+    const set = getTransferredReminders(userId);
+    set.add(key);
+    localStorage.setItem(getReminderTransferKey(userId), JSON.stringify([...set]));
+  } catch {}
+}
+
+// ─── Notifications Panel ──────────────────────────────────────────────────────
+const TodayReminders = ({
+  crops,
+  userId,
+  serverTime,
+  onTransferToTask,
+}: {
+  crops: TrackedCrop[];
+  userId: string;
+  serverTime: Date;
+  onTransferToTask: (reminder: { crop: string; emoji: string; message: string; time: string }) => Promise<void>;
+}) => {
+  const currentHour   = serverTime.getHours();
+  const currentMinute = serverTime.getMinutes();
+
+  const allReminders = crops
     .filter(c => c.status !== 'wilted')
     .flatMap(crop => {
       const templates = CROP_NOTIFICATIONS[crop.name] ?? DEFAULT_NOTIFICATIONS;
-      return templates.map(t => ({
-        crop: crop.name,
-        emoji: crop.emoji,
-        time: t.time,
-        message: t.message,
-        hour: parseInt(t.time.split(':')[0]),
-      }));
-    })
-    .filter(r => r.hour >= currentHour)
-    .sort((a, b) => a.hour - b.hour)
+      return templates.map(t => {
+        const [hStr, mStr] = t.time.split(':');
+        return {
+          crop: crop.name,
+          emoji: crop.emoji,
+          time: t.time,
+          message: t.message,
+          hour: parseInt(hStr),
+          minute: parseInt(mStr ?? '0'),
+        };
+      });
+    });
+
+  // Reminders whose time has arrived (hour:minute <= now) — transfer these to Tasks
+  const dueNow = allReminders.filter(
+    r => r.hour < currentHour || (r.hour === currentHour && r.minute <= currentMinute)
+  );
+
+  // Upcoming reminders (not yet due) — show in the panel
+  const upcoming = allReminders
+    .filter(r => r.hour > currentHour || (r.hour === currentHour && r.minute > currentMinute))
+    .sort((a, b) => a.hour - b.hour || a.minute - b.minute)
     .slice(0, 5);
 
-  if (reminders.length === 0) return null;
+  // Trigger transfer for due reminders that haven't been transferred today
+  useEffect(() => {
+    const transferred = getTransferredReminders(userId);
+    dueNow.forEach(r => {
+      const key = `${r.crop}_${r.time}`;
+      if (!transferred.has(key)) {
+        markReminderTransferred(userId, key);
+        onTransferToTask(r);
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crops, userId]);
+
+  if (upcoming.length === 0) return null;
 
   return (
     <Box
@@ -618,11 +733,11 @@ const TodayReminders = ({ crops }: { crops: TrackedCrop[] }) => {
         <Text fontSize="lg">🔔</Text>
         <Text fontWeight="800" color="#14532d">Today's Crop Reminders</Text>
         <Badge bg="#dcfce7" color="#16a34a" borderRadius="full" fontSize="10px" px={2} fontWeight="700">
-          {reminders.length} upcoming
+          {upcoming.length} upcoming
         </Badge>
       </HStack>
       <VStack gap={2} align="stretch">
-        {reminders.map((r, i) => (
+        {upcoming.map((r, i) => (
           <HStack key={i} gap={3} py={2} px={3} bg="#f9fafb" borderRadius="10px">
             <Text fontSize="16px">{r.emoji}</Text>
             <Box flex={1}>
@@ -637,50 +752,129 @@ const TodayReminders = ({ crops }: { crops: TrackedCrop[] }) => {
 };
 
 // ─── Task Item ────────────────────────────────────────────────────────────────
-const TaskItem = ({ task, onToggle, onDelete }: {
+const TaskItem = ({ task, onToggle, onDelete, now }: {
   task: Task;
   onToggle: (id: string) => void;
   onDelete: (id: string) => void;
-}) => (
-  <HStack
-    py={2.5} px={3}
-    bg={task.done ? 'gray.50' : 'white'}
-    borderRadius="12px"
-    border="1.5px solid"
-    borderColor={task.done ? '#f3f4f6' : priorityColor[task.priority] + '33'}
-    opacity={task.done ? 0.55 : 1}
-    gap={3}
-    transition="all 0.2s"
-    _hover={{ transform: 'translateX(3px)' }}
-  >
-    <Box
-      w="20px" h="20px" borderRadius="full" flexShrink={0}
-      border="2.5px solid"
-      borderColor={task.done ? '#22c55e' : priorityColor[task.priority]}
-      bg={task.done ? '#22c55e' : 'transparent'}
-      display="flex" alignItems="center" justifyContent="center"
-      cursor="pointer"
-      onClick={() => onToggle(task.id)}
+  now: Date;
+}) => {
+  const state = getTaskWindowState(task, now);
+  const canToggle = state === 'active' || state === 'manual' || state === 'done';
+
+  // Colors and labels per state
+  const stateConfig: Record<TaskWindowState, { bg: string; border: string; checkBg: string; checkBorder: string; badge: string; badgeColor: string; opacity: number }> = {
+    pending:  { bg: 'white',    border: '#d1fae5',  checkBg: 'transparent', checkBorder: '#d1d5db', badge: '⏳ Upcoming',       badgeColor: '#6b7280', opacity: 1 },
+    active:   { bg: '#f0fdf4',  border: '#16a34a',  checkBg: 'transparent', checkBorder: '#16a34a', badge: '✅ Active Now',      badgeColor: '#16a34a', opacity: 1 },
+    done:     { bg: '#f9fafb',  border: '#e5e7eb',  checkBg: '#22c55e',     checkBorder: '#22c55e', badge: '✓ Done',            badgeColor: '#22c55e', opacity: 0.6 },
+    expired:  { bg: '#fff7ed',  border: '#fed7aa',  checkBg: 'transparent', checkBorder: '#f97316', badge: '⌛ Window Closed',  badgeColor: '#f97316', opacity: 0.75 },
+    failed:   { bg: '#fff1f2',  border: '#fecdd3',  checkBg: '#ef4444',     checkBorder: '#ef4444', badge: '❌ Failed',         badgeColor: '#ef4444', opacity: 0.75 },
+    manual:   { bg: 'white',    border: priorityColor[task.priority] + '33', checkBg: task.done ? '#22c55e' : 'transparent', checkBorder: task.done ? '#22c55e' : priorityColor[task.priority], badge: task.priority, badgeColor: priorityColor[task.priority], opacity: task.done ? 0.55 : 1 },
+  };
+
+  const cfg = stateConfig[state];
+
+  // Countdown to window open / close
+  const countdownLabel = (() => {
+    if (!task.due_time || state === 'done' || state === 'failed') return null;
+    const due = new Date(task.due_time).getTime();
+    const WINDOW = 10 * 60 * 1000;
+    const nowMs = now.getTime();
+    if (state === 'pending') {
+      const secsLeft = Math.max(0, Math.round((due - WINDOW - nowMs) / 1000));
+      const m = Math.floor(secsLeft / 60), s = secsLeft % 60;
+      return `Opens in ${m}m ${s}s`;
+    }
+    if (state === 'active') {
+      const secsLeft = Math.max(0, Math.round((due + WINDOW - nowMs) / 1000));
+      const m = Math.floor(secsLeft / 60), s = secsLeft % 60;
+      return `Closes in ${m}m ${s}s`;
+    }
+    return null;
+  })();
+
+  return (
+    <HStack
+      py={2.5} px={3}
+      bg={cfg.bg}
+      borderRadius="12px"
+      border="1.5px solid"
+      borderColor={cfg.border}
+      opacity={cfg.opacity}
+      gap={3}
+      transition="all 0.2s"
+      _hover={{ transform: canToggle ? 'translateX(3px)' : 'none' }}
+      position="relative"
     >
-      {task.done && <Text fontSize="9px" color="white" fontWeight="900">✓</Text>}
-    </Box>
-    <Box flex={1} cursor="pointer" onClick={() => onToggle(task.id)}>
-      <Text fontSize="sm" fontWeight="700" color="#1a1a1a" textDecoration={task.done ? 'line-through' : 'none'}>
-        {task.label}
-      </Text>
-      <Text fontSize="11px" color="gray.400">{task.crop} · {task.due}</Text>
-    </Box>
-    <Badge
-      px={2} py={0.5} borderRadius="full" fontSize="10px"
-      bg={priorityColor[task.priority] + '18'}
-      color={priorityColor[task.priority]}
-      fontWeight="700" textTransform="uppercase"
-    >
-      {task.priority}
-    </Badge>
-    <Box as="button" fontSize="11px" color="gray.300" _hover={{ color: '#ef4444' }} onClick={() => onDelete(task.id)}>✕</Box>
-  </HStack>
-);
+      {/* Active pulse ring */}
+      {state === 'active' && (
+        <Box
+          position="absolute" inset={0} borderRadius="12px"
+          border="2px solid #16a34a"
+          opacity={0.4}
+          style={{ animation: 'pulse 2s infinite' }}
+          pointerEvents="none"
+        />
+      )}
+
+      {/* Checkbox */}
+      <Box
+        w="20px" h="20px" borderRadius="full" flexShrink={0}
+        border="2.5px solid"
+        borderColor={cfg.checkBorder}
+        bg={cfg.checkBg}
+        display="flex" alignItems="center" justifyContent="center"
+        cursor={canToggle ? 'pointer' : 'not-allowed'}
+        onClick={() => canToggle && onToggle(task.id)}
+        title={
+          state === 'pending' ? 'Task window not open yet' :
+          state === 'expired' ? 'Window closed — task expired' :
+          state === 'failed'  ? 'Task failed — window passed' : undefined
+        }
+      >
+        {(state === 'done') && <Text fontSize="9px" color="white" fontWeight="900">✓</Text>}
+        {(state === 'failed') && <Text fontSize="9px" color="white" fontWeight="900">✕</Text>}
+        {(state === 'expired') && <Text fontSize="9px" color="#f97316" fontWeight="900">!</Text>}
+      </Box>
+
+      {/* Label + due */}
+      <Box flex={1} cursor={canToggle ? 'pointer' : 'default'} onClick={() => canToggle && onToggle(task.id)}>
+        <Text
+          fontSize="sm" fontWeight="700" color={state === 'failed' ? '#ef4444' : '#1a1a1a'}
+          textDecoration={state === 'done' ? 'line-through' : 'none'}
+        >
+          {task.label}
+        </Text>
+        <HStack gap={2}>
+          <Text fontSize="11px" color="gray.400">{task.crop} · {task.due}</Text>
+          {countdownLabel && (
+            <Text fontSize="10px" fontWeight="700" color={state === 'active' ? '#16a34a' : '#6b7280'}>
+              {countdownLabel}
+            </Text>
+          )}
+        </HStack>
+      </Box>
+
+      {/* State badge */}
+      <Badge
+        px={2} py={0.5} borderRadius="full" fontSize="10px"
+        bg={cfg.badgeColor + '18'}
+        color={cfg.badgeColor}
+        fontWeight="700" textTransform={state === 'manual' ? 'uppercase' : 'none'}
+        whiteSpace="nowrap"
+      >
+        {cfg.badge}
+      </Badge>
+
+      {/* Delete */}
+      <Box
+        as="button" fontSize="11px"
+        color={state === 'failed' || state === 'done' ? 'gray.300' : 'gray.200'}
+        _hover={{ color: '#ef4444' }}
+        onClick={() => onDelete(task.id)}
+      >✕</Box>
+    </HStack>
+  );
+};
 
 // ─── Stat Card ────────────────────────────────────────────────────────────────
 const StatCard = ({ emoji, label, value, sub, color }: {
@@ -716,6 +910,9 @@ const GamifiedDashboard = () => {
   const [newTaskPriority, setNewTaskPriority] = useState<Task['priority']>('medium');
   const [newTaskCrop, setNewTaskCrop] = useState('General');
   const [saving, setSaving] = useState(false);
+  // Server-synced clock — ticks every second, corrected via NTP offset
+  const [now, setNow] = useState<Date>(serverNow);
+  const [ntpReady, setNtpReady] = useState(false);
   // Toast message
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
 
@@ -723,6 +920,39 @@ const GamifiedDashboard = () => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   };
+
+  // ── NTP sync + 1-second ticker ────────────────────────────────────────────
+  useEffect(() => {
+    // Initial NTP sync
+    syncNTPClock().then(() => {
+      setNtpReady(_ntpSynced);
+      setNow(serverNow());
+    });
+    // Re-sync every 5 minutes to correct clock drift
+    const syncInterval = setInterval(() => {
+      syncNTPClock().then(() => setNtpReady(_ntpSynced));
+    }, 5 * 60 * 1000);
+    // Tick every second for live countdowns and immediate window enforcement
+    const tickInterval = setInterval(() => setNow(serverNow()), 1_000);
+    return () => {
+      clearInterval(syncInterval);
+      clearInterval(tickInterval);
+    };
+  }, []);
+
+  // ── Auto-fail expired tasks ────────────────────────────────────────────────
+  // Runs every time `now` ticks — marks any task whose window closed as failed
+  useEffect(() => {
+    tasks.forEach(async task => {
+      if (task.failed || task.done || !task.due_time) return;
+      const state = getTaskWindowState(task, now);
+      if (state === 'expired') {
+        await supabase.from('farm_tasks').update({ failed: true }).eq('id', task.id);
+        setTasks(prev => prev.map(t => t.id === task.id ? { ...t, failed: true } : t));
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [now]);
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchCrops = useCallback(async () => {
@@ -800,7 +1030,7 @@ const GamifiedDashboard = () => {
       name,
       emoji,
       initial_day,
-      queued_at: new Date().toISOString(),
+      queued_at: serverNow().toISOString(),
       progress_points: 0,
       status: 'growing',
       last_verified_window: -1,
@@ -817,6 +1047,20 @@ const GamifiedDashboard = () => {
   const handleVerify = async (cropId: string, photoFile: File) => {
     if (!user) return;
     setSaving(true);
+
+    // ── Daily task gate: ALL scheduled tasks for today must be done (not failed) ──
+    const today = serverNow().toISOString().slice(0, 10);
+    const todayScheduledTasks = tasks.filter(t => t.due_time && t.due_time.slice(0, 10) === today);
+    const anyFailed  = todayScheduledTasks.some(t => t.failed);
+    const anyPending = todayScheduledTasks.some(t => !t.done && !t.failed);
+    if (anyFailed || anyPending) {
+      const reason = anyFailed
+        ? 'You have failed tasks today — complete all daily tasks to earn progress points.'
+        : 'Some tasks for today are still pending. Finish all tasks before submitting your photo.';
+      showToast(`⚠️ ${reason}`, 'error');
+      setSaving(false);
+      return;
+    }
 
     // Convert photo to base64 data URL — no storage bucket required
     const photoUrl = await new Promise<string>((resolve, reject) => {
@@ -839,7 +1083,7 @@ const GamifiedDashboard = () => {
     const { error: updateError } = await supabase.from('tracked_crops').update({
       progress_points: newPoints,
       status: newPoints >= 10 ? 'harvest_ready' : 'healthy',
-      last_verified_at: new Date().toISOString(),
+      last_verified_at: serverNow().toISOString(),
       last_verified_window: window,
       last_photo_url: photoUrl,
     }).eq('id', cropId);
@@ -866,7 +1110,7 @@ const GamifiedDashboard = () => {
           amount: 0,
           description: `🎟️ Free Listing Token — ${crop.name} growth milestone`,
           status: 'completed',
-          createdAt: new Date().toISOString(),
+          createdAt: serverNow().toISOString(),
           method: 'reward',
         }, ...(rev.transactions ?? [])];
         localStorage.setItem(storageKey, JSON.stringify(rev));
@@ -907,6 +1151,34 @@ const GamifiedDashboard = () => {
   };
 
   // ── Task actions ──────────────────────────────────────────────────────────
+  // ── Reminder → Task auto-transfer ─────────────────────────────────────────
+  const handleTransferReminderToTask = useCallback(async (reminder: {
+    crop: string; emoji: string; message: string; time: string;
+  }) => {
+    if (!user) return;
+    const label = `${reminder.emoji} ${reminder.message}`;
+    const payload = {
+      user_id: user.id,
+      label,
+      crop: reminder.crop,
+      due: `Today at ${reminder.time}`,
+      due_time: buildDueTime(reminder.time),
+      done: false,
+      failed: false,
+      priority: 'medium' as Task['priority'],
+      created_at: serverNow().toISOString(),
+    };
+    const { data, error } = await supabase.from('farm_tasks').insert(payload).select().single();
+    if (!error && data) {
+      setTasks(prev => {
+        const exists = prev.some(t => t.label === label && t.due === payload.due);
+        return exists ? prev : [data as Task, ...prev];
+      });
+      showToast(`📋 Reminder moved to Tasks: ${reminder.crop} at ${reminder.time}`);
+    }
+  }, [user]);
+
+  // ── Task actions ──────────────────────────────────────────────────────────
   const handleAddTask = async () => {
     if (!newTask.trim() || !user) return;
     const payload = {
@@ -914,9 +1186,11 @@ const GamifiedDashboard = () => {
       label: newTask.trim(),
       crop: newTaskCrop || 'General',
       due: 'Today',
+      due_time: null,
       done: false,
+      failed: false,
       priority: newTaskPriority,
-      created_at: new Date().toISOString(),
+      created_at: serverNow().toISOString(),
     };
     const { data, error } = await supabase.from('farm_tasks').insert(payload).select().single();
     if (!error && data) {
@@ -928,6 +1202,16 @@ const GamifiedDashboard = () => {
   const handleToggleTask = async (id: string) => {
     const task = tasks.find(t => t.id === id);
     if (!task) return;
+    // Enforce window — only allow toggle for active/manual/done tasks
+    const state = getTaskWindowState(task, now);
+    if (state === 'pending') {
+      showToast('⏳ This task window hasn\'t opened yet. Come back at the scheduled time!', 'error');
+      return;
+    }
+    if (state === 'expired' || state === 'failed') {
+      showToast('❌ Time\'s up — this task window has already closed.', 'error');
+      return;
+    }
     const newDone = !task.done;
     await supabase.from('farm_tasks').update({ done: newDone }).eq('id', id);
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: newDone } : t));
@@ -943,7 +1227,11 @@ const GamifiedDashboard = () => {
   const healthyCrops = crops.filter(c => c.status === 'healthy' || c.status === 'growing').length;
   const readyCrops = crops.filter(c => c.status === 'harvest_ready').length;
   const totalTokens = crops.reduce((s, c) => s + Math.floor(c.progress_points / 2), 0);
-  const doneTasks = tasks.filter(t => t.done).length;
+  const today = now.toISOString().slice(0, 10);
+  const todayTasks = tasks.filter(t => t.due_time ? t.due_time.slice(0, 10) === today : true);
+  const doneTasks = todayTasks.filter(t => t.done).length;
+  const failedTasks = todayTasks.filter(t => t.failed).length;
+  const allTasksPassedToday = todayTasks.length > 0 && !todayTasks.some(t => t.failed) && !todayTasks.some(t => !t.done && !t.failed && getTaskWindowState(t, now) === 'active');
   const pendingVerifications = crops.filter(c => isVerificationOpen(c) && c.status !== 'wilted').length;
 
   const username = user?.email?.split('@')[0] ?? 'Farmer';
@@ -965,6 +1253,12 @@ const GamifiedDashboard = () => {
       bg="#f0e8c8"
       py={8} px={3}
     >
+      <style>{`
+        @keyframes pulse {
+          0%, 100% { opacity: 0.4; transform: scale(1); }
+          50% { opacity: 0.15; transform: scale(1.02); }
+        }
+      `}</style>
       {/* Toast */}
       {toast && (
         <Box
@@ -1008,29 +1302,56 @@ const GamifiedDashboard = () => {
               Grow, verify, and earn free listing tokens.
             </Text>
           </Box>
-          <HStack gap={3} wrap="wrap">
-            {pendingVerifications > 0 && (
-              <Badge
-                bg="#fef3c7" color="#92400e"
-                px={4} py={2} borderRadius="full" fontSize="sm" fontWeight="700"
-                boxShadow="0 2px 8px rgba(245,158,11,0.25)"
-              >
-                📸 {pendingVerifications} verification{pendingVerifications > 1 ? 's' : ''} due!
-              </Badge>
-            )}
-            {saving && <Spinner size="sm" color="#16a34a" />}
-            <Button
-              bg={crops.length >= QUEUE_LIMIT ? 'gray.300' : '#16a34a'}
-              color={crops.length >= QUEUE_LIMIT ? 'gray.500' : 'white'}
-              borderRadius="full"
-              fontWeight="800" fontSize="sm"
-              _hover={{ bg: crops.length >= QUEUE_LIMIT ? 'gray.300' : '#15803d' }}
-              boxShadow={crops.length >= QUEUE_LIMIT ? 'none' : '0 4px 12px rgba(22,163,74,0.3)'}
-              cursor={crops.length >= QUEUE_LIMIT ? 'not-allowed' : 'pointer'}
-              onClick={() => crops.length < QUEUE_LIMIT && setShowAddCrop(true)}
+          <HStack gap={3} wrap="wrap" align="flex-start">
+            {/* Live Server Clock */}
+            <Box
+              bg="white" borderRadius="14px" px={4} py={2}
+              border={`1.5px solid ${ntpReady ? '#d1fae5' : '#fde68a'}`}
+              boxShadow="0 2px 8px rgba(0,0,0,0.05)"
+              textAlign="center"
             >
-              {crops.length >= QUEUE_LIMIT ? '🔒 Queue Full' : `+ Queue Crop (${crops.length}/${QUEUE_LIMIT})`}
-            </Button>
+              <HStack gap={2} justify="center">
+                <Box
+                  w="7px" h="7px" borderRadius="full"
+                  bg={ntpReady ? '#22c55e' : '#f59e0b'}
+                  style={{ animation: 'pulse 1.5s infinite' }}
+                />
+                <Text fontSize="xs" fontWeight="800" color={ntpReady ? '#16a34a' : '#92400e'}>
+                  {ntpReady ? '🇵🇭 PH National Time' : '⚠️ Syncing clock…'}
+                </Text>
+              </HStack>
+              <Text fontSize="lg" fontWeight="900" color="#14532d" letterSpacing="tight">
+                {now.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
+              </Text>
+              <Text fontSize="10px" color="gray.400">
+                {now.toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' })}
+              </Text>
+            </Box>
+
+            <VStack gap={2} align="flex-end">
+              {pendingVerifications > 0 && (
+                <Badge
+                  bg="#fef3c7" color="#92400e"
+                  px={4} py={2} borderRadius="full" fontSize="sm" fontWeight="700"
+                  boxShadow="0 2px 8px rgba(245,158,11,0.25)"
+                >
+                  📸 {pendingVerifications} verification{pendingVerifications > 1 ? 's' : ''} due!
+                </Badge>
+              )}
+              {saving && <Spinner size="sm" color="#16a34a" />}
+              <Button
+                bg={crops.length >= QUEUE_LIMIT ? 'gray.300' : '#16a34a'}
+                color={crops.length >= QUEUE_LIMIT ? 'gray.500' : 'white'}
+                borderRadius="full"
+                fontWeight="800" fontSize="sm"
+                _hover={{ bg: crops.length >= QUEUE_LIMIT ? 'gray.300' : '#15803d' }}
+                boxShadow={crops.length >= QUEUE_LIMIT ? 'none' : '0 4px 12px rgba(22,163,74,0.3)'}
+                cursor={crops.length >= QUEUE_LIMIT ? 'not-allowed' : 'pointer'}
+                onClick={() => crops.length < QUEUE_LIMIT && setShowAddCrop(true)}
+              >
+                {crops.length >= QUEUE_LIMIT ? '🔒 Queue Full' : `+ Queue Crop (${crops.length}/${QUEUE_LIMIT})`}
+              </Button>
+            </VStack>
           </HStack>
         </HStack>
 
@@ -1041,11 +1362,18 @@ const GamifiedDashboard = () => {
           <StatCard emoji="🥀" label="Wilted"         value={`${wiltedCrops}`}      sub="Need attention"   color="#ef4444" />
           <StatCard emoji="🌾" label="Harvest Ready"  value={`${readyCrops}`}       sub="Pick now!"        color="#f59e0b" />
           <StatCard emoji="🎟️" label="Tokens Earned"  value={`${totalTokens}`}      sub="Free listings"    color="#8b5cf6" />
-          <StatCard emoji="✅" label="Tasks Done"     value={tasks.length ? `${doneTasks}/${tasks.length}` : '0/0'} sub="Today" color="#3b82f6" />
+          <StatCard emoji="✅" label="Tasks Done"     value={todayTasks.length ? `${doneTasks}/${todayTasks.length}` : '0/0'} sub={failedTasks > 0 ? `${failedTasks} failed today` : 'Today'} color={failedTasks > 0 ? '#ef4444' : '#3b82f6'} />
         </Flex>
 
         {/* ── Today Reminders ── */}
-        {crops.length > 0 && <TodayReminders crops={crops} />}
+        {crops.length > 0 && (
+          <TodayReminders
+            crops={crops}
+            userId={user?.id ?? ''}
+            serverTime={now}
+            onTransferToTask={handleTransferReminderToTask}
+          />
+        )}
 
         <Flex gap={6} wrap="wrap" align="flex-start">
 
@@ -1108,9 +1436,10 @@ const GamifiedDashboard = () => {
                 {[
                   { step: '1', text: 'Queue a crop (max 10 days old to start)' },
                   { step: '2', text: 'Every 3 days, a photo upload window opens' },
-                  { step: '3', text: 'Upload a real photo of your plant to earn +1 point' },
-                  { step: '4', text: 'Miss the window → crop Wilts, progress pauses' },
-                  { step: '5', text: 'Earn 2 points → receive 1 Free Listing Token (skips ₱20 fee)' },
+                  { step: '3', text: 'Complete ALL daily tasks within their 20-min window (±10 min)' },
+                  { step: '4', text: 'Upload a real photo of your plant — both are required for +1 point' },
+                  { step: '5', text: 'Miss a task window or photo → that day doesn\'t count toward the 3-day goal' },
+                  { step: '6', text: 'Earn 2 points → receive 1 Free Listing Token (skips ₱20 fee)' },
                 ].map(({ step, text }) => (
                   <HStack key={step} gap={3}>
                     <Box
@@ -1130,7 +1459,38 @@ const GamifiedDashboard = () => {
 
           {/* ── Right: Task Queue ── */}
           <Box flex="1" minW="280px">
-            <Heading size="md" color="#14532d" fontWeight="900" mb={4}>📋 Task Queue</Heading>
+            <HStack mb={1} justify="space-between">
+              <Heading size="md" color="#14532d" fontWeight="900">📋 Task Queue</Heading>
+              {todayTasks.length > 0 && (
+                <Badge
+                  px={3} py={1} borderRadius="full" fontSize="10px" fontWeight="700"
+                  bg={failedTasks > 0 ? '#fee2e2' : allTasksPassedToday ? '#dcfce7' : '#fef9c3'}
+                  color={failedTasks > 0 ? '#dc2626' : allTasksPassedToday ? '#16a34a' : '#854d0e'}
+                >
+                  {failedTasks > 0 ? `❌ ${failedTasks} failed` : allTasksPassedToday ? '✅ All done!' : `${doneTasks}/${todayTasks.length} done`}
+                </Badge>
+              )}
+            </HStack>
+
+            {/* Daily compliance banner */}
+            {todayTasks.length > 0 && (
+              <Box
+                mb={4} px={3} py={2} borderRadius="10px"
+                bg={failedTasks > 0 ? '#fff1f2' : allTasksPassedToday ? '#f0fdf4' : '#fefce8'}
+                border="1px solid"
+                borderColor={failedTasks > 0 ? '#fecdd3' : allTasksPassedToday ? '#bbf7d0' : '#fde68a'}
+              >
+                <Text fontSize="11px" fontWeight="700"
+                  color={failedTasks > 0 ? '#dc2626' : allTasksPassedToday ? '#16a34a' : '#92400e'}
+                >
+                  {failedTasks > 0
+                    ? `⚠️ Day won't count — ${failedTasks} task${failedTasks > 1 ? 's' : ''} failed. Photo submission is blocked.`
+                    : allTasksPassedToday
+                    ? '🌟 All tasks done! You can now submit your crop photo for progress.'
+                    : '⏰ Complete all tasks within their 20-min window to unlock photo submission.'}
+                </Text>
+              </Box>
+            )}
 
             <VStack gap={2} mb={4} align="stretch">
               <Input
@@ -1169,25 +1529,59 @@ const GamifiedDashboard = () => {
               </HStack>
             </VStack>
 
+            {/* Active window tasks first */}
             <VStack gap={2} align="stretch">
-              {tasks.filter(t => !t.done).map(task => (
-                <TaskItem key={task.id} task={task} onToggle={handleToggleTask} onDelete={handleDeleteTask} />
-              ))}
-              {tasks.some(t => t.done) && (
-                <>
-                  <Box h="1px" bg="#f3f4f6" my={1} />
-                  <Text fontSize="10px" color="gray.400" fontWeight="800" textTransform="uppercase" px={1}>Completed</Text>
-                  {tasks.filter(t => t.done).map(task => (
-                    <TaskItem key={task.id} task={task} onToggle={handleToggleTask} onDelete={handleDeleteTask} />
-                  ))}
-                </>
-              )}
-              {tasks.length === 0 && (
-                <Box textAlign="center" py={8}>
-                  <Text fontSize="2xl" mb={2}>✅</Text>
-                  <Text fontSize="sm" color="gray.400">No tasks yet. Add one above!</Text>
-                </Box>
-              )}
+              {(() => {
+                const active   = tasks.filter(t => getTaskWindowState(t, now) === 'active');
+                const pending  = tasks.filter(t => getTaskWindowState(t, now) === 'pending');
+                const manual   = tasks.filter(t => getTaskWindowState(t, now) === 'manual' && !t.done);
+                const done     = tasks.filter(t => t.done);
+                const failed   = tasks.filter(t => t.failed);
+                const expired  = tasks.filter(t => getTaskWindowState(t, now) === 'expired');
+
+                return (
+                  <>
+                    {active.length > 0 && (
+                      <>
+                        <Text fontSize="10px" color="#16a34a" fontWeight="800" textTransform="uppercase" px={1}>🟢 Active Now</Text>
+                        {active.map(task => <TaskItem key={task.id} task={task} onToggle={handleToggleTask} onDelete={handleDeleteTask} now={now} />)}
+                      </>
+                    )}
+                    {pending.length > 0 && (
+                      <>
+                        <Text fontSize="10px" color="gray.400" fontWeight="800" textTransform="uppercase" px={1} mt={1}>⏳ Upcoming</Text>
+                        {pending.map(task => <TaskItem key={task.id} task={task} onToggle={handleToggleTask} onDelete={handleDeleteTask} now={now} />)}
+                      </>
+                    )}
+                    {manual.length > 0 && (
+                      <>
+                        <Text fontSize="10px" color="gray.500" fontWeight="800" textTransform="uppercase" px={1} mt={1}>📝 Manual</Text>
+                        {manual.map(task => <TaskItem key={task.id} task={task} onToggle={handleToggleTask} onDelete={handleDeleteTask} now={now} />)}
+                      </>
+                    )}
+                    {(failed.length > 0 || expired.length > 0) && (
+                      <>
+                        <Box h="1px" bg="#fee2e2" my={1} />
+                        <Text fontSize="10px" color="#ef4444" fontWeight="800" textTransform="uppercase" px={1}>❌ Failed / Expired</Text>
+                        {[...expired, ...failed].map(task => <TaskItem key={task.id} task={task} onToggle={handleToggleTask} onDelete={handleDeleteTask} now={now} />)}
+                      </>
+                    )}
+                    {done.length > 0 && (
+                      <>
+                        <Box h="1px" bg="#f3f4f6" my={1} />
+                        <Text fontSize="10px" color="gray.400" fontWeight="800" textTransform="uppercase" px={1}>Completed</Text>
+                        {done.map(task => <TaskItem key={task.id} task={task} onToggle={handleToggleTask} onDelete={handleDeleteTask} now={now} />)}
+                      </>
+                    )}
+                    {tasks.length === 0 && (
+                      <Box textAlign="center" py={8}>
+                        <Text fontSize="2xl" mb={2}>✅</Text>
+                        <Text fontSize="sm" color="gray.400">No tasks yet. Add one above!</Text>
+                      </Box>
+                    )}
+                  </>
+                );
+              })()}
             </VStack>
           </Box>
         </Flex>
