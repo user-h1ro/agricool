@@ -5,9 +5,9 @@ export type Plan = 'free' | 'premium';
 
 export interface UserRevenue {
   plan: Plan;
-  listingCredits: number;   // how many free listings remain (free users get 3 to start)
+  listingCredits: number;
   isPremium: boolean;
-  totalSpent: number;       // simulated ₱ spent in-app
+  totalSpent: number;
   transactions: Transaction[];
 }
 
@@ -18,16 +18,16 @@ export interface Transaction {
   description: string;
   status: 'completed' | 'pending' | 'failed';
   createdAt: string;
-  method: 'gcash_sim';
+  method: 'gcash_sim' | 'reward';
 }
 
 interface RevenueContextType {
   revenue: UserRevenue;
   isPremium: boolean;
   canPostListing: boolean;
-  payListingFee: () => Promise<boolean>;        // simulates ₱20 GCash payment
-  subscribeToPremium: () => Promise<boolean>;   // simulates ₱99/mo GCash payment
-  deductListingCredit: () => void;              // consumes 1 free listing credit
+  payListingFee: () => Promise<boolean>;
+  subscribeToPremium: () => Promise<boolean>;
+  deductListingCredit: () => void;
   cancelPremium: () => void;
   isPaymentLoading: boolean;
   showPaymentModal: boolean;
@@ -35,13 +35,15 @@ interface RevenueContextType {
   paymentModalType: 'listing' | 'premium' | null;
   setPaymentModalType: (v: 'listing' | 'premium' | null) => void;
   refreshRevenue: () => void;
+  // NEW: grant a token from external source (gamified tracker)
+  grantListingToken: (reason: string) => void;
 }
 
 const RevenueContext = createContext<RevenueContextType | null>(null);
 
-const STORAGE_KEY = 'agricool_revenue';
+export const STORAGE_KEY = 'agricool_revenue';
 
-function loadRevenue(userId: string): UserRevenue {
+export function loadRevenue(userId: string): UserRevenue {
   try {
     const raw = localStorage.getItem(`${STORAGE_KEY}_${userId}`);
     if (raw) return JSON.parse(raw);
@@ -55,7 +57,7 @@ function loadRevenue(userId: string): UserRevenue {
   };
 }
 
-function saveRevenue(userId: string, data: UserRevenue) {
+export function saveRevenue(userId: string, data: UserRevenue) {
   localStorage.setItem(`${STORAGE_KEY}_${userId}`, JSON.stringify(data));
 }
 
@@ -92,19 +94,16 @@ export function RevenueProvider({ children }: PropsWithChildren) {
     if (user?.id) setRevenue(loadRevenue(user.id));
   };
 
-  // Simulate GCash payment with a realistic 2-second "processing" delay
   const simulateGCashPayment = async (): Promise<boolean> => {
     setIsPaymentLoading(true);
     await new Promise((r) => setTimeout(r, 2200));
     setIsPaymentLoading(false);
-    // 95% success rate simulation
     return Math.random() > 0.05;
   };
 
   const payListingFee = async (): Promise<boolean> => {
     const success = await simulateGCashPayment();
     if (!success) return false;
-
     const tx: Transaction = {
       id: makeId(),
       type: 'listing_fee',
@@ -114,7 +113,6 @@ export function RevenueProvider({ children }: PropsWithChildren) {
       createdAt: new Date().toISOString(),
       method: 'gcash_sim',
     };
-
     const updated: UserRevenue = {
       ...revenue,
       totalSpent: revenue.totalSpent + 20,
@@ -127,7 +125,6 @@ export function RevenueProvider({ children }: PropsWithChildren) {
   const subscribeToPremium = async (): Promise<boolean> => {
     const success = await simulateGCashPayment();
     if (!success) return false;
-
     const tx: Transaction = {
       id: makeId(),
       type: 'subscription',
@@ -137,12 +134,11 @@ export function RevenueProvider({ children }: PropsWithChildren) {
       createdAt: new Date().toISOString(),
       method: 'gcash_sim',
     };
-
     const updated: UserRevenue = {
       ...revenue,
       plan: 'premium',
       isPremium: true,
-      listingCredits: 999,  // unlimited for premium
+      listingCredits: 999,
       totalSpent: revenue.totalSpent + 99,
       transactions: [tx, ...revenue.transactions],
     };
@@ -169,7 +165,25 @@ export function RevenueProvider({ children }: PropsWithChildren) {
     save(updated);
   };
 
-  // Free users can post if they have credits OR they can pay ₱20
+  // NEW: called by GamifiedDashboard when a milestone token is earned
+  const grantListingToken = (reason: string) => {
+    const tx: Transaction = {
+      id: makeId(),
+      type: 'listing_fee',
+      amount: 0,
+      description: `🎟️ Free Listing Token — ${reason}`,
+      status: 'completed',
+      createdAt: new Date().toISOString(),
+      method: 'reward',
+    };
+    const updated: UserRevenue = {
+      ...revenue,
+      listingCredits: revenue.listingCredits + 1,
+      transactions: [tx, ...revenue.transactions],
+    };
+    save(updated);
+  };
+
   const canPostListing = revenue.isPremium || revenue.listingCredits > 0;
 
   return (
@@ -188,6 +202,7 @@ export function RevenueProvider({ children }: PropsWithChildren) {
         paymentModalType,
         setPaymentModalType,
         refreshRevenue,
+        grantListingToken,
       }}
     >
       {children}
