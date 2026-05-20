@@ -22,6 +22,7 @@ import { useRevenue } from '@/context/RevenueProvider';
 import AdBanner from '@/components/AdBanner';
 import PaymentModal from '@/components/PaymentModal';
 import { useMusic } from '@/context/MusicProvider';
+import MarketPlaceTutorial from './MarketPlaceTutorial';
 
 const MarketPlace = () => {
   const { user } = useAuth();
@@ -39,6 +40,7 @@ const MarketPlace = () => {
   const [addedItem, setAddedItem] = useState<any>(null);
   const [editingCrop, setEditingCrop] = useState<any>(null);
   const [successMessage, setSuccessMessage] = useState<string>('');
+  const [showTutorial, setShowTutorial] = useState(false);
 
   const { onOpen, open, onClose } = useDisclosure();
   const navigate = useNavigate();
@@ -63,6 +65,18 @@ const MarketPlace = () => {
     fetchCrops();
     updateCartCount();
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      const seen = localStorage.getItem(`agricool_marketplace_tutorial_${user.id}`);
+      if (!seen) setShowTutorial(true);
+    }
+  }, [user]);
+
+  const handleTutorialDone = () => {
+    localStorage.setItem(`agricool_marketplace_tutorial_${user?.id}`, '1');
+    setShowTutorial(false);
+  };
 
   const showSuccess = (message: string) => {
     setSuccessMessage(message);
@@ -277,6 +291,27 @@ const MarketPlace = () => {
                   }}
                 >
                   <LuMapPin size={16} /> Near Me
+                </ChakraButton>
+
+                <ChakraButton
+                  onClick={() => setShowTutorial(true)}
+                  size="md"
+                  style={{
+                    background: 'rgba(255,255,255,0.15)',
+                    border: '1.5px solid rgba(255,255,255,0.4)',
+                    color: 'white',
+                    borderRadius: '10px',
+                    fontWeight: '600',
+                    backdropFilter: 'blur(8px)',
+                    padding: '0 16px',
+                    height: '42px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  📖 Tutorial
                 </ChakraButton>
 
                 <ChakraButton
@@ -652,6 +687,13 @@ const MarketPlace = () => {
             setShowListingPayModal(false);
             setPendingPayload(null);
           }}
+        />
+      )}
+      {/* Marketplace Tutorial — auto-shown once for new users */}
+      {showTutorial && (
+        <MarketPlaceTutorial
+          onComplete={handleTutorialDone}
+          onSkip={handleTutorialDone}
         />
       )}
     </Box>

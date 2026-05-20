@@ -7,6 +7,7 @@ import { supabase } from '@/supabase';
 import { useAuth } from '@/context/AuthProvider';
 import { useRevenue } from '@/context/RevenueProvider';
 import { ALMANAC_CROPS } from '@/pages/Almanac/data';
+import GamifiedTutorial from './GamifiedTutorial';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type CropStatus = 'healthy' | 'wilted' | 'growing' | 'harvest_ready';
@@ -1964,257 +1965,6 @@ const TutorialParticles = () => {
     </Box>
   );
 };
-
-const GamifiedTutorial = ({
-  onComplete,
-  onSkip,
-}: {
-  onComplete: () => void;
-  onSkip: () => void;
-}) => {
-  const [stepIdx, setStepIdx]       = useState(0);
-  const [xp, setXp]                 = useState(0);
-  const [leaving, setLeaving]       = useState(false);
-  const [showReward, setShowReward] = useState(false);
-  const [done, setDone]             = useState(false);
-
-  const step   = TUTORIAL_STEPS[stepIdx];
-  const isLast = stepIdx === TUTORIAL_STEPS.length - 1;
-
-  useEffect(() => {
-    const timer = setTimeout(() => setXp(TUTORIAL_STEPS[stepIdx].xp), 300);
-    return () => clearTimeout(timer);
-  }, [stepIdx]);
-
-  useEffect(() => {
-    if (xp > 0 && xp % 30 === 0) {
-      setShowReward(true);
-      setTimeout(() => setShowReward(false), 1300);
-    }
-  }, [xp]);
-
-  const goNext = () => {
-    if (leaving) return;
-    if (isLast) { setDone(true); return; }
-    setLeaving(true);
-    setTimeout(() => { setLeaving(false); setStepIdx(i => i + 1); }, 260);
-  };
-
-  const goPrev = () => {
-    if (leaving || stepIdx === 0) return;
-    setLeaving(true);
-    setTimeout(() => { setLeaving(false); setStepIdx(i => i - 1); }, 260);
-  };
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' || e.key === 'Enter') goNext();
-      if (e.key === 'ArrowLeft') goPrev();
-      if (e.key === 'Escape') onSkip();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepIdx, leaving]);
-
-  return (
-    <Box
-      position="fixed" inset={0} zIndex={9000}
-      bg="rgba(0,0,0,0.72)"
-      style={{ backdropFilter: 'blur(6px)', animation: 'tut-overlay-in 0.3s ease' }}
-      display="flex" alignItems="center" justifyContent="center"
-      p={4}
-    >
-      <style>{`
-        @keyframes kool-float   { 0%,100%{transform:translateY(0px) rotate(-1deg)} 50%{transform:translateY(-10px) rotate(1deg)} }
-        @keyframes kool-bounce  { 0%{transform:translateY(0px) scale(1)} 100%{transform:translateY(-12px) scale(1.07)} }
-        @keyframes tut-slide-in { from{opacity:0;transform:translateX(36px) scale(0.97)} to{opacity:1;transform:translateX(0) scale(1)} }
-        @keyframes tut-slide-out{ from{opacity:1;transform:translateX(0)} to{opacity:0;transform:translateX(-36px)} }
-        @keyframes tut-card-in  { from{opacity:0;transform:scale(0.93) translateY(22px)} to{opacity:1;transform:scale(1) translateY(0)} }
-        @keyframes tut-done-in  { from{opacity:0;transform:scale(0.93) translateY(22px)} to{opacity:1;transform:scale(1) translateY(0)} }
-        @keyframes tut-particle { 0%{opacity:1;transform:translateY(0) rotate(0deg)} 100%{opacity:0;transform:translateY(-180px) rotate(340deg)} }
-        @keyframes tut-overlay-in { from{opacity:0} to{opacity:1} }
-        @keyframes tut-reward-pop { 0%{opacity:0;transform:translateX(-50%) scale(0.5)} 60%{opacity:1;transform:translateX(-50%) scale(1.18)} 100%{opacity:0;transform:translateX(-50%) scale(1) translateY(-18px)} }
-        @keyframes tut-xp-fill { from{width:0} to{width:var(--tw)} }
-      `}</style>
-
-      {/* ── Done screen ── */}
-      {done ? (
-        <Box
-          bg="white" borderRadius="28px" p={10} textAlign="center" maxW="420px" w="100%"
-          boxShadow="0 28px 72px rgba(0,0,0,0.35)"
-          style={{ animation: 'tut-done-in 0.4s cubic-bezier(.34,1.2,.64,1) both' }}
-        >
-          <AgriCoolMascot size={88} animate expression="celebrate" />
-          <Text fontWeight="900" fontSize="2xl" color="#14532d" mt={4} mb={2} letterSpacing="-0.5px">
-            You're ready to farm!
-          </Text>
-          <Text fontSize="sm" color="gray.500" lineHeight="1.65" mb={7}>
-            You earned <Text as="span" fontWeight="800" color="#16a34a">100 XP</Text> and know everything you need.
-            Queue your first crop and start earning Free Listing Tokens!
-          </Text>
-          <Button
-            bg="#16a34a" color="white" borderRadius="full" fontWeight="800" fontSize="md"
-            px={8} py={6} _hover={{ bg: '#15803d' }}
-            boxShadow="0 4px 16px #16a34a55"
-            onClick={onComplete}
-          >
-            🌱 Let's Queue My First Crop!
-          </Button>
-        </Box>
-      ) : (
-        /* ── Tutorial card ── */
-        <Box
-          position="relative" w="100%" maxW="480px"
-          borderRadius="28px" overflow="hidden"
-          boxShadow="0 28px 72px rgba(0,0,0,0.35)"
-          style={{
-            background: step.bg,
-            animation: leaving ? 'tut-slide-out .26s ease both' : 'tut-card-in .4s cubic-bezier(.34,1.2,.64,1) both',
-          }}
-        >
-          {step.expression === 'celebrate' && <TutorialParticles />}
-
-          {/* XP bar */}
-          <Box px={5} pt={5} pb={0}>
-            <HStack justify="space-between" mb={1}>
-              <Text fontSize="10px" fontWeight="800" color="#16a34a" letterSpacing="1px" textTransform="uppercase">⚡ Tutorial XP</Text>
-              <Text fontSize="10px" fontWeight="800" color="#14532d">{xp} / 100</Text>
-            </HStack>
-            <Box h="10px" bg="#d1fae5" borderRadius="full" overflow="hidden">
-              <Box
-                h="100%" borderRadius="full"
-                bg="linear-gradient(90deg,#4ade80,#16a34a)"
-                w={`${xp}%`}
-                transition="width 0.8s cubic-bezier(.34,1.56,.64,1)"
-                boxShadow="0 0 8px #4ade8088"
-              />
-            </Box>
-          </Box>
-
-          {/* Step badge + skip */}
-          <HStack justify="space-between" px={5} pt={3}>
-            <HStack
-              gap={2} bg={step.accent + '18'} borderRadius="full" px={3} py={1}
-              display="inline-flex"
-            >
-              <Text fontSize="15px">{step.icon}</Text>
-              <Text fontSize="10px" fontWeight="800" color={step.accent} letterSpacing="1px" textTransform="uppercase">
-                Step {stepIdx + 1} of {TUTORIAL_STEPS.length}
-              </Text>
-            </HStack>
-            <Box
-              as="button" fontSize="11px" fontWeight="700" color="gray.400"
-              letterSpacing="0.5px" textTransform="uppercase"
-              bg="transparent" border="none" cursor="pointer" px={2} py={1} borderRadius="6px"
-              _hover={{ color: 'gray.600' }}
-              onClick={onSkip}
-            >
-              Skip tutorial
-            </Box>
-          </HStack>
-
-          {/* Mascot + speech bubble */}
-          <HStack gap={4} align="flex-start" px={6} pt={3} pb={5}>
-            <Box flexShrink={0} pt={2}>
-              <AgriCoolMascot size={78} animate expression={step.expression} />
-            </Box>
-            <Box
-              flex={1} bg="white" borderRadius="4px 20px 20px 20px"
-              p={4} boxShadow="0 4px 18px rgba(0,0,0,0.09)"
-              position="relative" mt={2}
-            >
-              {/* bubble tail */}
-              <Box
-                position="absolute" left="-10px" top="14px"
-                style={{
-                  width: 0, height: 0,
-                  borderTop: '10px solid transparent',
-                  borderRight: '10px solid white',
-                }}
-              />
-              <Text fontWeight="900" fontSize="17px" color="#14532d" mb={2} lineHeight="1.3" letterSpacing="-0.2px">
-                {step.title}
-              </Text>
-              <Text fontSize="13px" color="#374151" lineHeight="1.65" fontWeight="500" mb={step.tip ? 3 : 0}>
-                {step.body}
-              </Text>
-              {step.tip && (
-                <Box
-                  bg={step.accent + '12'}
-                  border={`1.5px solid ${step.accent}33`}
-                  borderRadius="10px" px={3} py={2}
-                >
-                  <Text fontSize="12px" fontWeight="700" color={step.accent} lineHeight="1.5">
-                    {step.tip}
-                  </Text>
-                </Box>
-              )}
-            </Box>
-          </HStack>
-
-          {/* Step dots */}
-          <HStack gap="6px" justify="center" pb={2}>
-            {TUTORIAL_STEPS.map((_, i) => (
-              <Box
-                key={i}
-                h="8px" borderRadius="full"
-                bg={i === stepIdx ? step.accent : i < stepIdx ? step.accent + '66' : '#e5e7eb'}
-                boxShadow={i === stepIdx ? `0 0 8px ${step.accent}88` : 'none'}
-                style={{
-                  width: i === stepIdx ? 22 : 8,
-                  transition: 'all 0.35s cubic-bezier(.34,1.56,.64,1)',
-                }}
-              />
-            ))}
-          </HStack>
-
-          {/* Buttons */}
-          <HStack justify="flex-end" gap={3} px={6} pb={6} pt={2}>
-            {stepIdx > 0 && (
-              <Box
-                as="button" border="1.5px solid #e5e7eb" color="gray.500" bg="transparent"
-                borderRadius="full" px={5} py={3} fontSize="13px" fontWeight="700"
-                cursor="pointer" _hover={{ borderColor: '#9ca3af', color: '#374151' }}
-                onClick={goPrev}
-              >
-                ← Back
-              </Box>
-            )}
-            <Box
-              as="button" color="white" border="none" borderRadius="full"
-              px={7} py={3} fontSize="14px" fontWeight="800" cursor="pointer"
-              style={{
-                background: step.accent,
-                boxShadow: `0 4px 14px ${step.accent}55`,
-                transition: 'transform .15s, box-shadow .15s',
-              }}
-              _hover={{ transform: 'translateY(-2px)', boxShadow: `0 8px 22px ${step.accent}55` }}
-              onClick={goNext}
-            >
-              {isLast ? "🚀 Let's Farm!" : stepIdx === 0 ? "Let's go! →" : 'Got it! →'}
-            </Box>
-          </HStack>
-
-          {/* XP reward flash */}
-          {showReward && (
-            <Box
-              position="absolute" top="28%" left="50%"
-              style={{ transform: 'translateX(-50%)', animation: 'tut-reward-pop 1.3s ease forwards' }}
-              bg="#16a34a" color="white" borderRadius="full"
-              px={5} py={2} fontWeight="900" fontSize="17px"
-              pointerEvents="none" zIndex={10}
-              boxShadow="0 4px 18px #16a34a88" whiteSpace="nowrap"
-            >
-              ⚡ +XP Milestone!
-            </Box>
-          )}
-        </Box>
-      )}
-    </Box>
-  );
-};
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 const GamifiedDashboard = () => {
   const { user } = useAuth();
@@ -2526,8 +2276,7 @@ const GamifiedDashboard = () => {
       checkAndUnlockAchievement('first_token');
       const allCropTokens = crops.reduce((s, c) => s + Math.floor(c.progress_points / 2), 0);
       if (allCropTokens + 1 >= 5) checkAndUnlockAchievement('five_tokens');
-      // daily quest: token type
-      incrementQuestProgress(user.id, 'token');
+      // daily quest progress tracked via dailyTokensEarned state above
     } else if (isRecovery) {
       showToast(`🌿 Recovery submitted. Plant is back on track.`);
       awardXP(XP_TABLE.recovery, 'Recovery');
@@ -2537,7 +2286,7 @@ const GamifiedDashboard = () => {
       awardXP(XP_TABLE.verify, 'Verification');
       setDailyVerifies(v => v + 1);
       checkAndUnlockAchievement('first_verify');
-      incrementQuestProgress(user.id, 'verify');
+      // daily quest progress tracked via dailyVerifies state above
     }
 
     // Streak bonus at 3+
@@ -2549,10 +2298,10 @@ const GamifiedDashboard = () => {
       setConfetti(true);
       checkAndUnlockAchievement('streak_3');
       if (newStreak >= 5) checkAndUnlockAchievement('streak_5');
-      incrementQuestProgress(user.id, 'streak');
+      // daily quest: streak progress derived from bestStreak (computed from crops)
     } else if (!isRecovery && newStreak >= 3) {
       checkAndUnlockAchievement('streak_3');
-      incrementQuestProgress(user.id, 'streak');
+      // daily quest: streak progress derived from bestStreak (computed from crops)
     }
 
     setSaving(false);
@@ -2658,7 +2407,7 @@ const GamifiedDashboard = () => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: newDone } : t));
     if (newDone && user) {
       awardXP(XP_TABLE.taskDone, 'Task Complete');
-      incrementQuestProgress(user.id, 'task');
+      // daily quest progress tracked via doneTasks (derived from tasks state)
     }
   };
 

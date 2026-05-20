@@ -9,6 +9,7 @@ import {
   IconButton,
   Input,
   Button,
+  Spinner,
 } from '@chakra-ui/react';
 import { useAuth } from '@/context/AuthProvider';
 import { useEffect, useRef, useState } from 'react';
@@ -29,6 +30,7 @@ import {
   LuChevronRight,
   LuCamera,
   LuCreditCard,
+  LuCopy,
 } from 'react-icons/lu';
 import { useNavigate } from 'react-router-dom';
 import BillingTab from '@/components/BillingTab';
@@ -76,6 +78,7 @@ const EditableField = ({
   value,
   editValue,
   isEditing,
+  isSaving,
   onEdit,
   onSave,
   onCancel,
@@ -88,6 +91,7 @@ const EditableField = ({
   value: string;
   editValue: string;
   isEditing: boolean;
+  isSaving?: boolean;
   onEdit: () => void;
   onSave: () => void;
   onCancel: () => void;
@@ -133,8 +137,9 @@ const EditableField = ({
                 onClick={onSave}
                 _hover={{ bg: 'green.600' }}
                 aria-label="Save"
+                disabled={isSaving}
               >
-                <LuCheck size={12} />
+                {isSaving ? <Spinner size="xs" /> : <LuCheck size={12} />}
               </IconButton>
               <IconButton
                 size="xs"
@@ -144,6 +149,7 @@ const EditableField = ({
                 onClick={onCancel}
                 _hover={{ bg: 'gray.200' }}
                 aria-label="Cancel"
+                disabled={isSaving}
               >
                 <LuX size={12} />
               </IconButton>
@@ -224,7 +230,7 @@ const Profile = () => {
   const [editFirstName, setEditFirstName] = useState('');
   const [editLastName, setEditLastName] = useState('');
   const [editingField, setEditingField] = useState<string | null>(null);
-  const [_savingProfile, setSavingProfile] = useState(false);
+  const [savingField, setSavingField] = useState<string | null>(null);
 
   // Password
   const [oldPassword, setOldPassword] = useState('');
@@ -236,7 +242,15 @@ const Profile = () => {
   const [loadingPassword, setLoadingPassword] = useState(false);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
 
-  const [modal, setModal] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  // Modal — now also supports a 'confirm' type for delete
+  const [modal, setModal] = useState<{
+    type: 'success' | 'error' | 'confirm';
+    message: string;
+    onConfirm?: () => void;
+  } | null>(null);
+
+  // User ID copy feedback
+  const [copiedId, setCopiedId] = useState(false);
 
   // Avatar
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -249,7 +263,6 @@ const Profile = () => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    // Validate
     if (!file.type.startsWith('image/')) {
       showModal('error', 'Please select an image file');
       return;
@@ -261,24 +274,28 @@ const Profile = () => {
 
     setUploadingAvatar(true);
     try {
-      const ext = file.name.split('.').pop();
+      // Normalize extension from mime type to avoid broken uploads (e.g. HEIC, no-extension)
+      const mimeToExt: Record<string, string> = {
+        'image/jpeg': 'jpg',
+        'image/png': 'png',
+        'image/gif': 'gif',
+        'image/webp': 'webp',
+      };
+      const ext = mimeToExt[file.type] || 'jpg';
       const filePath = `avatars/${user.id}.${ext}`;
 
-      // Upload to Supabase Storage bucket "avatars"
       const { error: uploadError } = await supabase.storage
         .from('avatars')
         .upload(filePath, file, { upsert: true });
 
       if (uploadError) throw uploadError;
 
-      // Get public URL
       const { data: urlData } = supabase.storage
         .from('avatars')
         .getPublicUrl(filePath);
 
       const publicUrl = `${urlData.publicUrl}?t=${Date.now()}`;
 
-      // Save to profiles table
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ avatar_url: publicUrl })
@@ -293,7 +310,6 @@ const Profile = () => {
       showModal('error', err.message || 'Failed to upload image');
     } finally {
       setUploadingAvatar(false);
-      // Reset input so same file can be re-selected
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
@@ -328,14 +344,21 @@ const Profile = () => {
     fetchProfile();
   }, [user]);
 
-  const showModal = (type: 'success' | 'error', message: string) => {
-    setModal({ type, message });
-    setTimeout(() => setModal(null), 4000);
+  // Auto-dismiss only for success/error, not confirm
+  const showModal = (
+    type: 'success' | 'error' | 'confirm',
+    message: string,
+    onConfirm?: () => void
+  ) => {
+    setModal({ type, message, onConfirm });
+    if (type !== 'confirm') {
+      setTimeout(() => setModal(null), 4000);
+    }
   };
 
   const saveField = async (field: 'first_name' | 'last_name') => {
     if (!user) return;
-    setSavingProfile(true);
+    setSavingField(field);
     const value = field === 'first_name' ? editFirstName : editLastName;
     const { error } = await supabase
       .from('profiles')
@@ -347,7 +370,7 @@ const Profile = () => {
     } else {
       showModal('error', 'Failed to update profile');
     }
-    setSavingProfile(false);
+    setSavingField(null);
     setEditingField(null);
   };
 
@@ -370,47 +393,57 @@ const Profile = () => {
     }
     setLoadingPassword(true);
     try {
-      const success = await changePassword(oldPassword, newPassword);
-      if (success) {
-        showModal('success', 'Password changed successfully!');
-        setOldPassword('');
-        setNewPassword('');
-        setConfirmPassword('');
-        setShowPasswordForm(false);
-      }
-    } catch {
-      showModal('error', 'Current password is incorrect');
+      await changePassword(oldPassword, newPassword);
+      showModal('success', 'Password changed successfully!');
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setShowPasswordForm(false);
+    } catch (err: any) {
+      // Show the actual error message from changePassword
+      showModal('error', err.message || 'Failed to change password');
     } finally {
       setLoadingPassword(false);
     }
   };
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm('Delete this listing?')) return;
-    const { error } = await supabase.from('crops').delete().eq('id', id);
-    if (!error) {
-      fetchMyListings();
-      showModal('success', 'Listing deleted successfully');
-    }
+  // Use modal confirmation instead of window.confirm
+  const handleDelete = (id: string, name: string) => {
+    showModal('confirm', `Delete "${name}" from your listings? This cannot be undone.`, async () => {
+      setModal(null);
+      const { error } = await supabase.from('crops').delete().eq('id', id);
+      if (!error) {
+        fetchMyListings();
+        showModal('success', 'Listing deleted successfully');
+      } else {
+        showModal('error', 'Failed to delete listing');
+      }
+    });
   };
 
+  const handleCopyId = () => {
+    if (!user?.id) return;
+    navigator.clipboard.writeText(user.id).then(() => {
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 2000);
+    });
+  };
+
+  // Safe initials — fall back to 👤 if name is empty
   const fullName = profile
     ? `${profile.first_name || ''} ${profile.last_name || ''}`.trim()
-    : user?.email?.split('@')[0] || 'User';
+    : user?.email?.split('@')[0] || '';
 
   const initials = fullName
-    .split(' ')
-    .map((w: string) => w[0])
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
+    ? fullName.split(' ').map((w: string) => w[0]).slice(0, 2).join('').toUpperCase()
+    : null;
 
   const memberSince = user?.created_at
     ? new Date(user.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long' })
     : 'N/A';
 
   return (
-    <Box minH="100vh" bg="#f5f0e8" py={8}>
+    <Box minH="100vh" bg="#e8e0c8" py={8}>
       <VStack align="stretch" maxW="680px" mx="auto" px={{ base: 4, md: 6 }} gap={5}>
 
         {/* ── Page Title ── */}
@@ -431,30 +464,12 @@ const Profile = () => {
           position="relative"
           overflow="hidden"
         >
-          {/* Background pattern */}
-          <Box
-            position="absolute"
-            top="-40px"
-            right="-40px"
-            w="180px"
-            h="180px"
-            borderRadius="full"
-            bg="rgba(255,255,255,0.05)"
-          />
-          <Box
-            position="absolute"
-            bottom="-60px"
-            right="60px"
-            w="120px"
-            h="120px"
-            borderRadius="full"
-            bg="rgba(255,255,255,0.04)"
-          />
+          <Box position="absolute" top="-40px" right="-40px" w="180px" h="180px" borderRadius="full" bg="rgba(255,255,255,0.05)" />
+          <Box position="absolute" bottom="-60px" right="60px" w="120px" h="120px" borderRadius="full" bg="rgba(255,255,255,0.04)" />
 
           <HStack gap={4} align="center">
-            {/* Avatar — clickable upload */}
+            {/* Avatar */}
             <Box position="relative" flexShrink={0}>
-              {/* Hidden file input */}
               <input
                 ref={fileInputRef}
                 type="file"
@@ -462,10 +477,8 @@ const Profile = () => {
                 style={{ display: 'none' }}
                 onChange={handleAvatarChange}
               />
-
               <Flex
-                w="72px"
-                h="72px"
+                w="72px" h="72px"
                 borderRadius="full"
                 bg="rgba(255,255,255,0.15)"
                 border="2.5px solid rgba(255,255,255,0.3)"
@@ -483,29 +496,21 @@ const Profile = () => {
                 transition="opacity 0.2s"
               >
                 {uploadingAvatar ? (
-                  <Text fontSize="sm" fontWeight="700">...</Text>
+                  <Spinner size="md" color="white" />
                 ) : avatarUrl ? (
-                  <img
-                    src={avatarUrl}
-                    alt="Profile"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                  />
+                  <img src={avatarUrl} alt="Profile" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : initials ? (
+                  initials
                 ) : (
-                  initials || '👤'
+                  <Text fontSize="2rem">👤</Text>
                 )}
               </Flex>
-
-              {/* Camera badge */}
               <Flex
-                position="absolute"
-                bottom="-2px"
-                right="-2px"
-                w="22px"
-                h="22px"
+                position="absolute" bottom="-2px" right="-2px"
+                w="22px" h="22px"
                 borderRadius="full"
                 bg={uploadingAvatar ? 'gray.300' : 'white'}
-                align="center"
-                justify="center"
+                align="center" justify="center"
                 cursor="pointer"
                 boxShadow="sm"
                 onClick={handleAvatarClick}
@@ -517,43 +522,26 @@ const Profile = () => {
 
             {/* Info */}
             <Box flex={1} minW={0}>
-              <Text
-                fontWeight="800"
-                fontSize="xl"
-                color="white"
-                lineHeight="1.2"
-                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-              >
-                {fullName}
+              <Text fontWeight="800" fontSize="xl" color="white" lineHeight="1.2"
+                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {fullName || user?.email?.split('@')[0] || 'New Farmer'}
               </Text>
               <HStack gap={2} mt={1} flexWrap="wrap">
                 <Badge
-                  bg="rgba(255,255,255,0.2)"
-                  color="white"
-                  borderRadius="full"
-                  px={2.5}
-                  py={0.5}
-                  fontSize="10px"
-                  fontWeight="700"
-                  backdropFilter="blur(10px)"
+                  bg="rgba(255,255,255,0.2)" color="white" borderRadius="full"
+                  px={2.5} py={0.5} fontSize="10px" fontWeight="700" backdropFilter="blur(10px)"
                 >
                   🌱 Active Seller
                 </Badge>
               </HStack>
-              <Text fontSize="xs" color="rgba(255,255,255,0.6)" mt={1.5}>
-                Member since {memberSince}
-              </Text>
+              <Text fontSize="xs" color="rgba(255,255,255,0.6)" mt={1.5}>Member since {memberSince}</Text>
             </Box>
 
             {/* Stats pill */}
             <Box
-              bg="rgba(255,255,255,0.12)"
-              borderRadius="xl"
-              p={3}
-              textAlign="center"
-              backdropFilter="blur(10px)"
-              border="1px solid rgba(255,255,255,0.15)"
-              flexShrink={0}
+              bg="rgba(255,255,255,0.12)" borderRadius="xl" p={3}
+              textAlign="center" backdropFilter="blur(10px)"
+              border="1px solid rgba(255,255,255,0.15)" flexShrink={0}
             >
               <Text fontWeight="900" fontSize="xl" color="white">{myListings.length}</Text>
               <Text fontSize="10px" fontWeight="700" color="rgba(255,255,255,0.6)" textTransform="uppercase" letterSpacing="wider">
@@ -565,20 +553,14 @@ const Profile = () => {
 
         {/* ── Personal Information ── */}
         <SectionCard>
-          <SectionHeader
-            icon={<LuUser size={16} />}
-            title="Personal Information"
-            subtitle="Update your name and details"
-          />
+          <SectionHeader icon={<LuUser size={16} />} title="Personal Information" subtitle="Update your name and details" />
           <EditableField
             label="First Name"
             value={profile?.first_name || ''}
             editValue={editFirstName}
             isEditing={editingField === 'first_name'}
-            onEdit={() => {
-              setEditFirstName(profile?.first_name || '');
-              setEditingField('first_name');
-            }}
+            isSaving={savingField === 'first_name'}
+            onEdit={() => { setEditFirstName(profile?.first_name || ''); setEditingField('first_name'); }}
             onSave={() => saveField('first_name')}
             onCancel={() => setEditingField(null)}
             onChange={setEditFirstName}
@@ -589,10 +571,8 @@ const Profile = () => {
             value={profile?.last_name || ''}
             editValue={editLastName}
             isEditing={editingField === 'last_name'}
-            onEdit={() => {
-              setEditLastName(profile?.last_name || '');
-              setEditingField('last_name');
-            }}
+            isSaving={savingField === 'last_name'}
+            onEdit={() => { setEditLastName(profile?.last_name || ''); setEditingField('last_name'); }}
             onSave={() => saveField('last_name')}
             onCancel={() => setEditingField(null)}
             onChange={setEditLastName}
@@ -602,11 +582,7 @@ const Profile = () => {
 
         {/* ── Account Details ── */}
         <SectionCard>
-          <SectionHeader
-            icon={<LuMail size={16} />}
-            title="Account Details"
-            subtitle="Your account credentials"
-          />
+          <SectionHeader icon={<LuMail size={16} />} title="Account Details" subtitle="Your account credentials" />
           <EditableField
             label="Email Address"
             value={user?.email || ''}
@@ -619,13 +595,29 @@ const Profile = () => {
             readOnly
             placeholder="—"
           />
+          {/* User ID — now a copy button instead of raw UUID display */}
           <Box py={4} px={6}>
-            <Text fontSize="11px" fontWeight="700" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={1}>
+            <Text fontSize="11px" fontWeight="700" color="gray.400" textTransform="uppercase" letterSpacing="wider" mb={2}>
               User ID
             </Text>
-            <Text fontSize="xs" fontWeight="500" color="gray.400" fontFamily="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {user?.id}
-            </Text>
+            <HStack gap={2}>
+              <Text fontSize="xs" fontWeight="500" color="gray.400" fontFamily="mono"
+                style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '240px' }}>
+                {user?.id}
+              </Text>
+              <IconButton
+                size="xs"
+                variant="ghost"
+                color={copiedId ? 'green.500' : 'gray.400'}
+                borderRadius="full"
+                onClick={handleCopyId}
+                aria-label="Copy User ID"
+                _hover={{ bg: 'green.50', color: 'green.600' }}
+              >
+                {copiedId ? <LuCheck size={12} /> : <LuCopy size={12} />}
+              </IconButton>
+              {copiedId && <Text fontSize="10px" color="green.500" fontWeight="700">Copied!</Text>}
+            </HStack>
           </Box>
         </SectionCard>
 
@@ -639,33 +631,19 @@ const Profile = () => {
           <Box px={6} py={4}>
             <HStack justify="space-between" align="center">
               <HStack gap={3}>
-                <Flex
-                  w="36px" h="36px"
-                  borderRadius="10px"
-                  bg="green.50"
-                  color="green.600"
-                  align="center"
-                  justify="center"
-                  fontSize="16px"
-                >
+                <Flex w="36px" h="36px" borderRadius="10px" bg="green.50" color="green.600" align="center" justify="center">
                   <LuMapPin size={16} />
                 </Flex>
                 <Box>
                   <Text fontWeight="700" fontSize="sm" color="gray.800">Default Farm Location</Text>
                   <Text fontSize="xs" color="gray.400">
-                    {profile?.farm_name
-                      ? `📍 ${profile.farm_name}`
-                      : 'Set your usual selling/farm location'}
+                    {profile?.farm_name ? `📍 ${profile.farm_name}` : 'Set your usual selling/farm location'}
                   </Text>
                 </Box>
               </HStack>
               <HStack gap={2}>
-                <Badge colorScheme="green" variant="subtle" borderRadius="full" fontSize="10px" px={2}>
-                  Manage
-                </Badge>
-                <Box color="gray.400">
-                  <LuChevronRight size={16} />
-                </Box>
+                <Badge colorScheme="green" variant="subtle" borderRadius="full" fontSize="10px" px={2}>Manage</Badge>
+                <Box color="gray.400"><LuChevronRight size={16} /></Box>
               </HStack>
             </HStack>
           </Box>
@@ -676,14 +654,7 @@ const Profile = () => {
           <Box px={6} py={4} borderBottom={showPasswordForm ? '1px solid' : 'none'} borderColor="gray.50">
             <HStack justify="space-between" align="center">
               <HStack gap={3}>
-                <Flex
-                  w="36px" h="36px"
-                  borderRadius="10px"
-                  bg="orange.50"
-                  color="orange.500"
-                  align="center"
-                  justify="center"
-                >
+                <Flex w="36px" h="36px" borderRadius="10px" bg="orange.50" color="orange.500" align="center" justify="center">
                   <LuShield size={16} />
                 </Flex>
                 <Box>
@@ -732,13 +703,10 @@ const Profile = () => {
                   placeholder="Repeat new password"
                 />
                 <Button
-                  bg="green.600"
-                  color="white"
-                  size="md"
-                  borderRadius="xl"
-                  fontWeight="700"
+                  bg="green.600" color="white" size="md" borderRadius="xl" fontWeight="700"
                   onClick={handleChangePassword}
                   loading={loadingPassword}
+                  loadingText="Saving..."
                   _hover={{ bg: 'green.700' }}
                   mt={1}
                 >
@@ -753,7 +721,7 @@ const Profile = () => {
         <SectionCard>
           <SectionHeader
             icon={<LuPackage size={16} />}
-            title={`My Listings`}
+            title="My Listings"
             subtitle={`${myListings.length} active crop${myListings.length !== 1 ? 's' : ''} listed`}
           />
 
@@ -768,8 +736,7 @@ const Profile = () => {
               {myListings.map((crop, i) => (
                 <Box
                   key={crop.id}
-                  px={6}
-                  py={4}
+                  px={6} py={4}
                   borderBottom={i < myListings.length - 1 ? '1px solid' : 'none'}
                   borderColor="gray.50"
                   _hover={{ bg: 'gray.50' }}
@@ -778,33 +745,24 @@ const Profile = () => {
                   <HStack justify="space-between">
                     <HStack gap={3}>
                       <Flex
-                        w="44px"
-                        h="44px"
-                        borderRadius="12px"
-                        bg={crop.bg || 'green.50'}
-                        align="center"
-                        justify="center"
-                        fontSize="1.3rem"
-                        flexShrink={0}
+                        w="44px" h="44px" borderRadius="12px"
+                        bg={crop.bg || 'green.50'} align="center" justify="center"
+                        fontSize="1.3rem" flexShrink={0}
                       >
                         {crop.emoji}
                       </Flex>
                       <Box>
                         <Text fontWeight="700" fontSize="sm" color="gray.800">{crop.name}</Text>
                         <Text fontSize="xs" color="gray.400">{crop.variety} · {crop.quantity}</Text>
-                        <Text fontSize="xs" color="green.600" fontWeight="700" mt={0.5}>
-                          ₱{crop.price} / {crop.unit}
-                        </Text>
+                        <Text fontSize="xs" color="green.600" fontWeight="700" mt={0.5}>₱{crop.price} / {crop.unit}</Text>
                       </Box>
                     </HStack>
                     <IconButton
                       size="sm"
-                      bg="red.50"
-                      color="red.500"
-                      borderRadius="xl"
+                      bg="red.50" color="red.500" borderRadius="xl"
                       _hover={{ bg: 'red.500', color: 'white' }}
                       transition="all 0.15s"
-                      onClick={() => handleDelete(crop.id)}
+                      onClick={() => handleDelete(crop.id, crop.name)}
                       aria-label="Delete listing"
                     >
                       <LuTrash2 size={14} />
@@ -823,6 +781,7 @@ const Profile = () => {
             title="Billing & Subscription"
             subtitle="Manage your plan and transaction history"
           />
+          {/* No extra padding wrapper — BillingTab has padding: 0 internally */}
           <Box px={6} py={5}>
             <BillingTab />
           </Box>
@@ -830,16 +789,9 @@ const Profile = () => {
 
         {/* ── Log Out ── */}
         <Box
-          as="button"
-          w="full"
-          py={4}
-          px={6}
-          bg="white"
-          border="1px solid"
-          borderColor="red.100"
-          borderRadius="2xl"
-          onClick={logout}
-          cursor="pointer"
+          as="button" w="full" py={4} px={6}
+          bg="white" border="1px solid" borderColor="red.100"
+          borderRadius="2xl" onClick={logout} cursor="pointer"
           _hover={{ bg: 'red.50', borderColor: 'red.200' }}
           transition="all 0.2s"
         >
@@ -852,49 +804,54 @@ const Profile = () => {
         <Box h={4} />
       </VStack>
 
-      {/* ── Custom Modal ── */}
+      {/* ── Modal (success / error / confirm) ── */}
       {modal && (
         <Box
-          position="fixed"
-          top={0} left={0} right={0} bottom={0}
-          bg="blackAlpha.700"
-          zIndex={9999}
-          display="flex"
-          alignItems="center"
-          justifyContent="center"
-          px={4}
-          onClick={() => setModal(null)}
+          position="fixed" top={0} left={0} right={0} bottom={0}
+          bg="blackAlpha.700" zIndex={9999}
+          display="flex" alignItems="center" justifyContent="center" px={4}
+          onClick={() => modal.type !== 'confirm' && setModal(null)}
         >
           <Box
-            bg="white"
-            p={8}
-            borderRadius="2xl"
-            textAlign="center"
-            maxW="360px"
-            w="full"
+            bg="white" p={8} borderRadius="2xl" textAlign="center"
+            maxW="360px" w="full"
             boxShadow="0 25px 60px rgba(0,0,0,0.2)"
             onClick={(e) => e.stopPropagation()}
           >
             <Text fontSize="4xl" mb={4}>
-              {modal.type === 'success' ? '✅' : '❌'}
+              {modal.type === 'success' ? '✅' : modal.type === 'error' ? '❌' : '🗑️'}
             </Text>
-            <Heading
-              size="md"
-              mb={3}
-              color={modal.type === 'success' ? 'green.600' : 'red.600'}
+            <Heading size="md" mb={3}
+              color={modal.type === 'success' ? 'green.600' : modal.type === 'error' ? 'red.600' : 'gray.800'}
             >
-              {modal.type === 'success' ? 'Success!' : 'Error'}
+              {modal.type === 'success' ? 'Success!' : modal.type === 'error' ? 'Error' : 'Are you sure?'}
             </Heading>
             <Text fontSize="sm" color="gray.600" mb={6}>{modal.message}</Text>
-            <Button
-              onClick={() => setModal(null)}
-              colorScheme={modal.type === 'success' ? 'green' : 'red'}
-              borderRadius="xl"
-              fontWeight="700"
-              w="full"
-            >
-              Got it
-            </Button>
+
+            {modal.type === 'confirm' ? (
+              <HStack gap={3}>
+                <Button
+                  flex={1} variant="outline" borderRadius="xl" fontWeight="700"
+                  onClick={() => setModal(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  flex={1} colorScheme="red" borderRadius="xl" fontWeight="700"
+                  onClick={modal.onConfirm}
+                >
+                  Delete
+                </Button>
+              </HStack>
+            ) : (
+              <Button
+                onClick={() => setModal(null)}
+                colorScheme={modal.type === 'success' ? 'green' : 'red'}
+                borderRadius="xl" fontWeight="700" w="full"
+              >
+                Got it
+              </Button>
+            )}
           </Box>
         </Box>
       )}

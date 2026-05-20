@@ -28,54 +28,27 @@ const AgriCoolLogo = ({
       }}
     >
       <g transform="translate(15, 10)">
-        {/* Outer leaf (yellow) */}
-        <path
-          d="M80 240 C10 190 -10 90 60 20 C100 -15 175 15 185 90 C195 165 140 220 80 240Z"
-          fill="#F5D800"
-          style={{ transition: 'fill 0.3s' }}
-        />
-        {/* Inner leaf (green) */}
-        <path
-          d="M80 240 C55 200 45 145 70 90 C88 48 148 30 170 85 C188 130 155 200 80 240Z"
-          fill="#7DC400"
-        />
-        {/* Stem */}
+        <path d="M80 240 C10 190 -10 90 60 20 C100 -15 175 15 185 90 C195 165 140 220 80 240Z" fill="#F5D800" style={{ transition: 'fill 0.3s' }} />
+        <path d="M80 240 C55 200 45 145 70 90 C88 48 148 30 170 85 C188 130 155 200 80 240Z" fill="#7DC400" />
         <path d="M80 240 Q74 260 60 272" fill="none" stroke="#4a8a00" strokeWidth="5" strokeLinecap="round" />
-
-        {/* Shades — left lens */}
         <rect x="22" y="100" width="52" height="34" rx="10" fill="#1a1a1a" />
-        {/* Shades — right lens (wink: smaller on right) */}
         {expression === 'wink' ? (
           <rect x="88" y="109" width="52" height="16" rx="8" fill="#1a1a1a" />
         ) : (
           <rect x="88" y="100" width="52" height="34" rx="10" fill="#1a1a1a" />
         )}
-        {/* Bridge */}
         <rect x="74" y="112" width="14" height="7" rx="3" fill="#1a1a1a" />
-        {/* Left arm */}
-        <rect x="4" y="109" width="18" height="7" rx="3" fill="#1a1a1a" />
-        {/* Right arm */}
+        <rect x="4"  y="109" width="18" height="7" rx="3" fill="#1a1a1a" />
         <rect x="140" y="109" width="18" height="7" rx="3" fill="#1a1a1a" />
-        {/* Shine left */}
-        <ellipse cx="40" cy="111" rx="8" ry="5" fill="#fff" opacity="0.25" />
-        {/* Shine right */}
-        {expression !== 'wink' && (
-          <ellipse cx="106" cy="111" rx="8" ry="5" fill="#fff" opacity="0.25" />
-        )}
-
-        {/* Mouth */}
+        <ellipse cx="40"  cy="111" rx="8" ry="5" fill="#fff" opacity="0.25" />
+        {expression !== 'wink' && <ellipse cx="106" cy="111" rx="8" ry="5" fill="#fff" opacity="0.25" />}
         {isExcited ? (
-          /* Big open smile */
           <path d="M60 165 Q80 185 105 165" fill="none" stroke="#4a8a00" strokeWidth="5" strokeLinecap="round" />
         ) : expression === 'wink' ? (
-          /* Smirk */
           <path d="M65 165 Q85 172 100 162" fill="none" stroke="#4a8a00" strokeWidth="4" strokeLinecap="round" />
         ) : (
-          /* Neutral smile */
           <path d="M62 162 Q82 176 105 162" fill="none" stroke="#4a8a00" strokeWidth="4" strokeLinecap="round" />
         )}
-
-        {/* Celebrate stars */}
         {isCelebrate && (
           <>
             <text x="155" y="55" fontSize="22" style={{ userSelect: 'none' }}>⭐</text>
@@ -87,119 +60,6 @@ const AgriCoolLogo = ({
     </svg>
   );
 };
-
-// ─── Tutorial steps ────────────────────────────────────────────────────────────
-type Step = {
-  id: number;
-  title: string;
-  body: string;
-  tip?: string;
-  expression: 'normal' | 'excited' | 'wink' | 'celebrate';
-  icon: string;
-  bg: string;
-  accent: string;
-  xp: number;
-};
-
-const STEPS: Step[] = [
-  {
-    id: 0,
-    title: "Hey Farmer, I'm Kool! 👋",
-    body: "Welcome to the AgriCool Crop Tracker! I'm your guide — a chill leaf with shades. Let's walk through everything you need to know to start earning Free Listing Tokens.",
-    expression: 'excited',
-    icon: '🌿',
-    bg: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-    accent: '#16a34a',
-    xp: 0,
-  },
-  {
-    id: 1,
-    title: 'Queue Your Crops 🌱',
-    body: "First, pick a crop and tell us how many days it's already been in the ground — maximum 10 days. This locks your timeline. Once you start, there's no going back!",
-    tip: '💡 Pro tip: Queue crops that are in season for faster, healthier growth.',
-    expression: 'normal',
-    icon: '🌱',
-    bg: 'linear-gradient(135deg, #f0fdf4 0%, #d1fae5 100%)',
-    accent: '#059669',
-    xp: 10,
-  },
-  {
-    id: 2,
-    title: 'Complete Daily Tasks ✅',
-    body: "Every crop gets its own care schedule — watering, shading, pest checks. Each task has a 30-minute window (±15 min from the scheduled time). Miss the window? Task fails.",
-    tip: '⚠️ If 4 or more tasks fail in one day, your photo upload for that day is blocked.',
-    expression: 'wink',
-    icon: '📋',
-    bg: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
-    accent: '#2563eb',
-    xp: 20,
-  },
-  {
-    id: 3,
-    title: 'Upload a Photo Every 3 Days 📸',
-    body: "Every 3 days, a 48-hour verification window opens. Upload a real photo of your crop — our AI (powered by Claude) checks the plant's health and gives you instant feedback!",
-    tip: "🤖 The AI reads your photo and tells you if it's healthy, or what problem it spotted.",
-    expression: 'excited',
-    icon: '📸',
-    bg: 'linear-gradient(135deg, #fdf4ff 0%, #f3e8ff 100%)',
-    accent: '#7c3aed',
-    xp: 30,
-  },
-  {
-    id: 4,
-    title: 'Earn Progress Points & Tokens 🎟️',
-    body: "Each successful photo = +1 progress point. Every 2 points earns you 1 Free Listing Token — that's ₱20 you save every time you list a crop on the marketplace!",
-    tip: '🔥 Keep a 3-verification streak and get a BONUS token on top!',
-    expression: 'celebrate',
-    icon: '🎟️',
-    bg: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
-    accent: '#d97706',
-    xp: 40,
-  },
-  {
-    id: 5,
-    title: "Don't Let Your Crop Wilt! 🥀",
-    body: "Miss a verification window entirely and your crop wilts — your streak resets down by 1. But don't give up! Submit a recovery photo to get back on track (costs -1 point).",
-    tip: '✅ Recovery is always worth it — a wilted crop can still earn tokens!',
-    expression: 'wink',
-    icon: '🥀',
-    bg: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%)',
-    accent: '#e11d48',
-    xp: 50,
-  },
-  {
-    id: 6,
-    title: 'Harvest at 10 Points 🌾',
-    body: "Hit 10 progress points and your crop is harvest-ready! Submit a harvest photo to complete your journey and unlock a downloadable Harvest Badge — proof of your hard work.",
-    tip: '🏅 Share your badge on social media and show off your farming skills!',
-    expression: 'celebrate',
-    icon: '🌾',
-    bg: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)',
-    accent: '#ea580c',
-    xp: 60,
-  },
-  {
-    id: 7,
-    title: "Climb the Leaderboard 🏆",
-    body: "All your points add up on the Top Farmers Leaderboard. Compete with other farmers for the top spot — the more crops you verify and harvest, the higher you rank!",
-    tip: '🥇 Top farmers get bragging rights AND inspire the whole community.',
-    expression: 'excited',
-    icon: '🏆',
-    bg: 'linear-gradient(135deg, #f0fdf4 0%, #d1fae5 100%)',
-    accent: '#16a34a',
-    xp: 70,
-  },
-  {
-    id: 8,
-    title: "You're Ready to Farm! 🚀",
-    body: "That's everything, farmer! Queue your first crop, complete your tasks, and start earning tokens. The harvest won't wait — let's grow something great together!",
-    expression: 'celebrate',
-    icon: '🚀',
-    bg: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-    accent: '#16a34a',
-    xp: 100,
-  },
-];
 
 // ─── XP bar ───────────────────────────────────────────────────────────────────
 const XPBar = ({ xp, maxXp = 100 }: { xp: number; maxXp?: number }) => (
@@ -260,6 +120,550 @@ const Particles = () => {
   );
 };
 
+// ─── Interactive: Crop Queue Simulator ───────────────────────────────────────
+const FakeCropQueue = ({ onInteract }: { onInteract: () => void }) => {
+  const crops = ['🌱 Pechay', '🍅 Tomato', '🥬 Kangkong', '🫑 Sili'];
+  const [selected, setSelected] = useState<string | null>(null);
+  const [days, setDays] = useState(0);
+  const [queued, setQueued] = useState(false);
+
+  const handleQueue = () => {
+    if (selected && days >= 0) {
+      setQueued(true);
+      onInteract();
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>Pick a crop:</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {crops.map(c => (
+          <button
+            key={c}
+            onClick={() => setSelected(c)}
+            style={{
+              background: selected === c ? '#059669' : 'white',
+              color: selected === c ? 'white' : '#374151',
+              border: `1.5px solid ${selected === c ? '#059669' : '#d1d5db'}`,
+              borderRadius: 8, padding: '5px 10px', fontSize: 12,
+              fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s',
+            }}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>Days in ground:</span>
+        <input
+          type="number" min={0} max={10} value={days}
+          onChange={e => setDays(Math.min(10, Math.max(0, parseInt(e.target.value) || 0)))}
+          style={{
+            width: 60, border: '1.5px solid #d1d5db', borderRadius: 8,
+            padding: '4px 8px', fontSize: 13, textAlign: 'center',
+            outline: 'none', fontFamily: 'inherit',
+          }}
+        />
+        <span style={{ fontSize: 11, color: '#9ca3af' }}>max 10</span>
+      </div>
+      {!queued ? (
+        <button
+          onClick={handleQueue}
+          disabled={!selected}
+          style={{
+            background: selected ? '#059669' : '#e5e7eb',
+            color: selected ? 'white' : '#9ca3af',
+            border: 'none', borderRadius: 8, padding: '8px',
+            fontSize: 13, fontWeight: 700, cursor: selected ? 'pointer' : 'default',
+            transition: 'all 0.2s',
+          }}
+        >
+          🌱 Queue Crop
+        </button>
+      ) : (
+        <div style={{
+          background: '#f0fdf4', border: '1.5px solid #86efac',
+          borderRadius: 8, padding: '8px 12px',
+          fontSize: 12, fontWeight: 700, color: '#16a34a',
+        }}>
+          ✅ {selected} queued! Day {days} locked in — timeline started!
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Interactive: Daily Task Checklist ───────────────────────────────────────
+const FakeTaskChecklist = ({ onInteract }: { onInteract: () => void }) => {
+  const tasks = ['💧 Water crop', '☀️ Check shading', '🐛 Pest inspection'];
+  const [checked, setChecked] = useState<boolean[]>([false, false, false]);
+  const [done, setDone] = useState(false);
+
+  const toggle = (i: number) => {
+    const next = [...checked];
+    next[i] = !next[i];
+    setChecked(next);
+    if (next.filter(Boolean).length >= 2 && !done) {
+      setDone(true);
+      onInteract();
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>Today's tasks — check at least 2:</div>
+      {tasks.map((task, i) => (
+        <div
+          key={task}
+          onClick={() => toggle(i)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '8px 12px', borderRadius: 10, cursor: 'pointer',
+            background: checked[i] ? '#f0fdf4' : 'white',
+            border: `1.5px solid ${checked[i] ? '#86efac' : '#e5e7eb'}`,
+            transition: 'all 0.2s',
+          }}
+        >
+          <div style={{
+            width: 20, height: 20, borderRadius: 6,
+            border: `2px solid ${checked[i] ? '#16a34a' : '#d1d5db'}`,
+            background: checked[i] ? '#16a34a' : 'white',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0, transition: 'all 0.2s', fontSize: 12,
+          }}>
+            {checked[i] ? '✓' : ''}
+          </div>
+          <span style={{
+            fontSize: 13, fontWeight: 600,
+            color: checked[i] ? '#15803d' : '#374151',
+            textDecoration: checked[i] ? 'line-through' : 'none',
+          }}>
+            {task}
+          </span>
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: '#9ca3af' }}>±15 min window</span>
+        </div>
+      ))}
+      {done && (
+        <div style={{ fontSize: 12, fontWeight: 700, color: '#16a34a', marginTop: 4 }}>
+          ✅ Tasks complete! Missing 4+ tasks in a day blocks your photo upload.
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Interactive: Fake Photo Upload ──────────────────────────────────────────
+const FakePhotoUpload = ({ onInteract }: { onInteract: () => void }) => {
+  const [uploaded, setUploaded] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  const handleUpload = () => {
+    setAnalyzing(true);
+    setTimeout(() => {
+      setAnalyzing(false);
+      setUploaded(true);
+      onInteract();
+    }, 1800);
+  };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      {!uploaded && !analyzing && (
+        <div
+          onClick={handleUpload}
+          style={{
+            border: '2px dashed #7c3aed', borderRadius: 12,
+            padding: '18px', textAlign: 'center', cursor: 'pointer',
+            background: '#fdf4ff',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={e => e.currentTarget.style.background = '#f3e8ff'}
+          onMouseLeave={e => e.currentTarget.style.background = '#fdf4ff'}
+        >
+          <div style={{ fontSize: 28, marginBottom: 4 }}>📸</div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#7c3aed' }}>Click to simulate upload</div>
+          <div style={{ fontSize: 11, color: '#a78bfa', marginTop: 2 }}>AI will analyze your photo</div>
+        </div>
+      )}
+      {analyzing && (
+        <div style={{
+          border: '2px solid #7c3aed', borderRadius: 12, padding: '18px',
+          textAlign: 'center', background: '#fdf4ff',
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#7c3aed', marginBottom: 6 }}>
+            🤖 Claude AI is analyzing your crop photo…
+          </div>
+          <div style={{
+            height: 6, background: '#f3e8ff', borderRadius: 99, overflow: 'hidden',
+          }}>
+            <div style={{
+              height: '100%', width: '70%',
+              background: 'linear-gradient(90deg, #a78bfa, #7c3aed)',
+              borderRadius: 99,
+              animation: 'ai-scan 1.8s ease forwards',
+            }} />
+          </div>
+          <style>{`@keyframes ai-scan { from { width: 0% } to { width: 90% } }`}</style>
+        </div>
+      )}
+      {uploaded && (
+        <div style={{
+          border: '1.5px solid #86efac', borderRadius: 12, padding: '14px',
+          background: '#f0fdf4',
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: '#16a34a', marginBottom: 4 }}>
+            ✅ Photo Verified! +1 Progress Point
+          </div>
+          <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.5 }}>
+            🤖 <strong>AI says:</strong> Plant looks healthy! Leaves are vibrant green with no visible pest damage. Keep up the great work! 🌿
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Interactive: Token Counter ───────────────────────────────────────────────
+const FakeTokenCounter = ({ onInteract }: { onInteract: () => void }) => {
+  const [points, setPoints] = useState(0);
+  const [tokens, setTokens] = useState(0);
+  const [interacted, setInteracted] = useState(false);
+
+  const addPoint = () => {
+    const newPoints = points + 1;
+    setPoints(newPoints);
+    const newTokens = Math.floor(newPoints / 2);
+    setTokens(newTokens);
+    if (!interacted) {
+      setInteracted(true);
+      onInteract();
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{
+        display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap',
+      }}>
+        <div style={{
+          flex: 1, background: '#fffbeb', border: '1.5px solid #fde68a',
+          borderRadius: 10, padding: '10px 14px', textAlign: 'center',
+        }}>
+          <div style={{ fontSize: 20, fontWeight: 900, color: '#d97706' }}>{points}</div>
+          <div style={{ fontSize: 11, color: '#92400e', fontWeight: 700 }}>Progress Points</div>
+        </div>
+        <div style={{
+          flex: 1, background: '#f0fdf4', border: '1.5px solid #86efac',
+          borderRadius: 10, padding: '10px 14px', textAlign: 'center',
+        }}>
+          <div style={{ fontSize: 20, fontWeight: 900, color: '#16a34a' }}>{tokens}</div>
+          <div style={{ fontSize: 11, color: '#166534', fontWeight: 700 }}>Free Tokens 🎟️</div>
+        </div>
+      </div>
+      <button
+        onClick={addPoint}
+        style={{
+          width: '100%', background: '#d97706', color: 'white',
+          border: 'none', borderRadius: 8, padding: '9px',
+          fontSize: 13, fontWeight: 700, cursor: 'pointer',
+          transition: 'transform 0.1s',
+        }}
+        onMouseDown={e => e.currentTarget.style.transform = 'scale(0.97)'}
+        onMouseUp={e => e.currentTarget.style.transform = 'scale(1)'}
+      >
+        📸 Simulate Verified Photo (+1 point)
+      </button>
+      {points > 0 && (
+        <div style={{ marginTop: 6, fontSize: 11, color: '#d97706', fontWeight: 700 }}>
+          {points % 2 === 0
+            ? `🎟️ Earned ${tokens} token${tokens !== 1 ? 's' : ''}! Each saves you ₱20 in the Marketplace.`
+            : `${2 - (points % 2)} more point${2 - (points % 2) !== 1 ? 's' : ''} for your next free token!`}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Interactive: Wilt Recovery ───────────────────────────────────────────────
+const FakeWiltRecovery = ({ onInteract }: { onInteract: () => void }) => {
+  const [state, setState] = useState<'wilted' | 'recovering' | 'recovered'>('wilted');
+
+  const handleRecover = () => {
+    setState('recovering');
+    setTimeout(() => {
+      setState('recovered');
+      onInteract();
+    }, 1400);
+  };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{
+        borderRadius: 10, padding: '12px 14px',
+        background: state === 'wilted' ? '#fff1f2' : state === 'recovering' ? '#fffbeb' : '#f0fdf4',
+        border: `1.5px solid ${state === 'wilted' ? '#fecdd3' : state === 'recovering' ? '#fde68a' : '#86efac'}`,
+        transition: 'all 0.4s ease',
+      }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: state === 'wilted' ? '#e11d48' : state === 'recovering' ? '#d97706' : '#16a34a' }}>
+          {state === 'wilted' && '🥀 Your crop wilted! Streak reset -1.'}
+          {state === 'recovering' && '🌿 Submitting recovery photo…'}
+          {state === 'recovered' && '✅ Recovered! -1 point but still in the game!'}
+        </div>
+      </div>
+      {state === 'wilted' && (
+        <button
+          onClick={handleRecover}
+          style={{
+            marginTop: 8, background: '#e11d48', color: 'white',
+            border: 'none', borderRadius: 8, padding: '8px 16px',
+            fontSize: 13, fontWeight: 700, cursor: 'pointer',
+          }}
+        >
+          📸 Submit Recovery Photo
+        </button>
+      )}
+    </div>
+  );
+};
+
+// ─── Interactive: Harvest Badge ───────────────────────────────────────────────
+const FakeHarvestBadge = ({ onInteract }: { onInteract: () => void }) => {
+  const [claimed, setClaimed] = useState(false);
+
+  const handleClaim = () => {
+    setClaimed(true);
+    onInteract();
+  };
+
+  return (
+    <div style={{ marginTop: 12, textAlign: 'center' }}>
+      {!claimed ? (
+        <>
+          <div style={{
+            display: 'inline-block',
+            background: 'linear-gradient(135deg, #fff7ed, #ffedd5)',
+            border: '2px solid #fdba74',
+            borderRadius: 16, padding: '16px 24px', marginBottom: 10,
+          }}>
+            <div style={{ fontSize: 36, marginBottom: 4 }}>🌾</div>
+            <div style={{ fontSize: 14, fontWeight: 900, color: '#ea580c' }}>HARVEST BADGE</div>
+            <div style={{ fontSize: 11, color: '#9a3412' }}>10 points achieved!</div>
+          </div>
+          <br />
+          <button
+            onClick={handleClaim}
+            style={{
+              background: '#ea580c', color: 'white', border: 'none',
+              borderRadius: 99, padding: '10px 24px',
+              fontSize: 13, fontWeight: 800, cursor: 'pointer',
+              boxShadow: '0 4px 14px #ea580c55',
+            }}
+          >
+            🏅 Claim Harvest Badge!
+          </button>
+        </>
+      ) : (
+        <div style={{
+          background: 'linear-gradient(135deg, #fff7ed, #fef3c7)',
+          border: '2px solid #fbbf24', borderRadius: 16, padding: '16px',
+        }}>
+          <div style={{ fontSize: 28, marginBottom: 6 }}>🎉</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: '#ea580c' }}>
+            Badge claimed! Download it and share your harvest!
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Interactive: Leaderboard Preview ─────────────────────────────────────────
+const FakeLeaderboard = ({ onInteract }: { onInteract: () => void }) => {
+  const [voted, setVoted] = useState(false);
+  const players = [
+    { name: 'Maria F.', pts: 42, emoji: '🥇' },
+    { name: 'Jose M.',  pts: 35, emoji: '🥈' },
+    { name: 'You',      pts: 18, emoji: '🥉', isYou: true },
+  ];
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      {players.map((p, i) => (
+        <div key={p.name} style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '8px 12px', borderRadius: 10, marginBottom: 5,
+          background: p.isYou ? '#f0fdf4' : 'white',
+          border: `1.5px solid ${p.isYou ? '#86efac' : '#e5e7eb'}`,
+        }}>
+          <span style={{ fontSize: 18 }}>{p.emoji}</span>
+          <span style={{ flex: 1, fontSize: 13, fontWeight: p.isYou ? 800 : 600, color: p.isYou ? '#15803d' : '#374151' }}>
+            {p.name}
+          </span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: '#d97706' }}>{p.pts} pts</span>
+        </div>
+      ))}
+      {!voted ? (
+        <button
+          onClick={() => { setVoted(true); onInteract(); }}
+          style={{
+            marginTop: 6, width: '100%', background: '#16a34a', color: 'white',
+            border: 'none', borderRadius: 8, padding: '8px',
+            fontSize: 13, fontWeight: 700, cursor: 'pointer',
+          }}
+        >
+          👆 I want to climb the leaderboard!
+        </button>
+      ) : (
+        <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: '#16a34a' }}>
+          🔥 That's the spirit! Keep farming to climb higher!
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Step definitions ─────────────────────────────────────────────────────────
+type InteractiveComponent =
+  | 'queueCrop'
+  | 'taskChecklist'
+  | 'photoUpload'
+  | 'tokenCounter'
+  | 'wiltRecovery'
+  | 'harvestBadge'
+  | 'leaderboard'
+  | null;
+
+type Step = {
+  id: number;
+  title: string;
+  body: string;
+  tip?: string;
+  expression: 'normal' | 'excited' | 'wink' | 'celebrate';
+  icon: string;
+  bg: string;
+  accent: string;
+  xp: number;
+  interactive: InteractiveComponent;
+  interactLabel?: string;
+};
+
+const STEPS: Step[] = [
+  {
+    id: 0,
+    title: "Hey Farmer, I'm Kool! 👋",
+    body: "Welcome to the AgriCool Crop Tracker! I'm your guide — a chill leaf with shades. Let's walk through everything you need to know to start earning Free Listing Tokens. And don't worry — you'll get to try things out as we go!",
+    expression: 'excited',
+    icon: '🌿',
+    bg: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+    accent: '#16a34a',
+    xp: 0,
+    interactive: null,
+  },
+  {
+    id: 1,
+    title: 'Queue Your Crops 🌱',
+    body: "First, pick a crop and tell us how many days it's already been in the ground — maximum 10 days. This locks your timeline. Once you start, there's no going back!",
+    tip: '💡 Try queueing a crop below to see how it works!',
+    expression: 'normal',
+    icon: '🌱',
+    bg: 'linear-gradient(135deg, #f0fdf4 0%, #d1fae5 100%)',
+    accent: '#059669',
+    xp: 12,
+    interactive: 'queueCrop',
+    interactLabel: 'Queue a crop above to continue →',
+  },
+  {
+    id: 2,
+    title: 'Complete Daily Tasks ✅',
+    body: "Every crop gets its own care schedule — watering, shading, pest checks. Each task has a 30-minute window (±15 min from the scheduled time). Miss the window? Task fails.",
+    tip: '⚠️ If 4 or more tasks fail in one day, your photo upload for that day is blocked.',
+    expression: 'wink',
+    icon: '📋',
+    bg: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+    accent: '#2563eb',
+    xp: 25,
+    interactive: 'taskChecklist',
+    interactLabel: 'Check at least 2 tasks to continue →',
+  },
+  {
+    id: 3,
+    title: 'Upload a Photo Every 3 Days 📸',
+    body: "Every 3 days, a 48-hour verification window opens. Upload a real photo of your crop — our AI (powered by Claude) checks the plant's health and gives you instant feedback!",
+    tip: '🤖 Click the upload area below to simulate a photo verification!',
+    expression: 'excited',
+    icon: '📸',
+    bg: 'linear-gradient(135deg, #fdf4ff 0%, #f3e8ff 100%)',
+    accent: '#7c3aed',
+    xp: 40,
+    interactive: 'photoUpload',
+    interactLabel: 'Upload a photo above to continue →',
+  },
+  {
+    id: 4,
+    title: 'Earn Progress Points & Tokens 🎟️',
+    body: "Each successful photo = +1 progress point. Every 2 points earns you 1 Free Listing Token — that's ₱20 you save every time you list a crop on the marketplace!",
+    tip: '🔥 Keep a 3-verification streak and get a BONUS token on top!',
+    expression: 'celebrate',
+    icon: '🎟️',
+    bg: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
+    accent: '#d97706',
+    xp: 55,
+    interactive: 'tokenCounter',
+    interactLabel: 'Click the button to simulate earning points →',
+  },
+  {
+    id: 5,
+    title: "Don't Let Your Crop Wilt! 🥀",
+    body: "Miss a verification window entirely and your crop wilts — your streak resets down by 1. But don't give up! Submit a recovery photo to get back on track (costs -1 point).",
+    tip: '✅ Recovery is always worth it — a wilted crop can still earn tokens!',
+    expression: 'wink',
+    icon: '🥀',
+    bg: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%)',
+    accent: '#e11d48',
+    xp: 68,
+    interactive: 'wiltRecovery',
+    interactLabel: 'Submit a recovery photo to continue →',
+  },
+  {
+    id: 6,
+    title: 'Harvest at 10 Points 🌾',
+    body: "Hit 10 progress points and your crop is harvest-ready! Submit a harvest photo to complete your journey and unlock a downloadable Harvest Badge — proof of your hard work.",
+    tip: '🏅 Share your badge on social media and show off your farming skills!',
+    expression: 'celebrate',
+    icon: '🌾',
+    bg: 'linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%)',
+    accent: '#ea580c',
+    xp: 80,
+    interactive: 'harvestBadge',
+    interactLabel: 'Claim your harvest badge to continue →',
+  },
+  {
+    id: 7,
+    title: "Climb the Leaderboard 🏆",
+    body: "All your points add up on the Top Farmers Leaderboard. Compete with other farmers for the top spot — the more crops you verify and harvest, the higher you rank!",
+    tip: '🥇 Top farmers get bragging rights AND inspire the whole community.',
+    expression: 'excited',
+    icon: '🏆',
+    bg: 'linear-gradient(135deg, #f0fdf4 0%, #d1fae5 100%)',
+    accent: '#16a34a',
+    xp: 90,
+    interactive: 'leaderboard',
+    interactLabel: 'Tap the button in the leaderboard to continue →',
+  },
+  {
+    id: 8,
+    title: "You're Ready to Farm! 🚀",
+    body: "That's everything, farmer! Queue your first crop, complete your tasks, and start earning tokens. The harvest won't wait — let's grow something great together!",
+    expression: 'celebrate',
+    icon: '🚀',
+    bg: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+    accent: '#16a34a',
+    xp: 100,
+    interactive: null,
+  },
+];
+
 // ─── Main tutorial component ──────────────────────────────────────────────────
 type GamifiedTutorialProps = {
   onComplete: () => void;
@@ -267,25 +671,25 @@ type GamifiedTutorialProps = {
 };
 
 const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
-  const [stepIdx, setStepIdx]     = useState(0);
-  const [xp, setXp]               = useState(0);
-  const [animateIn, setAnimateIn] = useState(true);
-  const [leaving, setLeaving]     = useState(false);
+  const [stepIdx, setStepIdx]       = useState(0);
+  const [xp, setXp]                 = useState(0);
+  const [animateIn, setAnimateIn]   = useState(true);
+  const [leaving, setLeaving]       = useState(false);
   const [showReward, setShowReward] = useState(false);
+  const [interacted, setInteracted] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
   const step = STEPS[stepIdx];
   const isLast = stepIdx === STEPS.length - 1;
   const isCelebrate = step.expression === 'celebrate';
+  const requiresInteraction = step.interactive !== null && !interacted;
 
-  // Animate XP gain when step changes
   useEffect(() => {
     const target = STEPS[stepIdx].xp;
     const timer = setTimeout(() => setXp(target), 300);
     return () => clearTimeout(timer);
   }, [stepIdx]);
 
-  // Show reward flash on XP milestones
   useEffect(() => {
     if (xp > 0 && xp % 30 === 0) {
       setShowReward(true);
@@ -293,8 +697,13 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
     }
   }, [xp]);
 
+  // Reset interaction gate on step change
+  useEffect(() => {
+    setInteracted(false);
+  }, [stepIdx]);
+
   const goNext = () => {
-    if (leaving) return;
+    if (leaving || requiresInteraction) return;
     setLeaving(true);
     setTimeout(() => {
       setLeaving(false);
@@ -317,21 +726,21 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
     }, 260);
   };
 
-  // Keyboard nav
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowRight' || e.key === 'Enter') goNext();
+      if ((e.key === 'ArrowRight' || e.key === 'Enter') && !requiresInteraction) goNext();
       if (e.key === 'ArrowLeft') goPrev();
       if (e.key === 'Escape') onSkip();
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stepIdx, leaving]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stepIdx, leaving, interacted]);
+
+  const handleInteract = () => setInteracted(true);
 
   return (
     <>
-      {/* Keyframe styles */}
       <style>{`
         @keyframes mascot-float {
           0%, 100% { transform: translateY(0px) rotate(-1deg); }
@@ -366,6 +775,13 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
           from { opacity: 0; transform: scale(0.92) translateY(24px); }
           to   { opacity: 1; transform: scale(1) translateY(0); }
         }
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          20%      { transform: translateX(-6px); }
+          40%      { transform: translateX(6px); }
+          60%      { transform: translateX(-4px); }
+          80%      { transform: translateX(4px); }
+        }
         .tut-btn-primary {
           background: var(--accent);
           color: #fff;
@@ -379,11 +795,16 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
           transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
           letter-spacing: 0.3px;
         }
-        .tut-btn-primary:hover {
+        .tut-btn-primary:hover:not(:disabled) {
           transform: translateY(-2px);
           box-shadow: 0 8px 24px var(--accent-glow);
         }
-        .tut-btn-primary:active { transform: translateY(0); }
+        .tut-btn-primary:active:not(:disabled) { transform: translateY(0); }
+        .tut-btn-primary:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
+          animation: shake 0.4s ease;
+        }
         .tut-btn-secondary {
           background: transparent;
           color: #6b7280;
@@ -410,6 +831,13 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
           transition: color 0.15s;
         }
         .tut-skip:hover { color: #6b7280; }
+        .interact-hint {
+          animation: pulse-hint 1.4s ease-in-out infinite;
+        }
+        @keyframes pulse-hint {
+          0%, 100% { opacity: 1; }
+          50%       { opacity: 0.6; }
+        }
       `}</style>
 
       {/* Backdrop */}
@@ -420,6 +848,7 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
         animation: 'overlay-in 0.3s ease',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         padding: 16,
+        overflowY: 'auto',
       }}>
         {/* Card */}
         <div
@@ -430,7 +859,7 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
           style={{
             position: 'relative',
             width: '100%',
-            maxWidth: 480,
+            maxWidth: 500,
             borderRadius: 28,
             background: step.bg,
             boxShadow: '0 32px 80px rgba(0,0,0,0.35)',
@@ -440,28 +869,20 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
               : animateIn
               ? 'card-in 0.4s cubic-bezier(0.34,1.2,0.64,1) both'
               : 'none',
-            // CSS var for accent
             '--accent': step.accent,
             '--accent-glow': step.accent + '55',
           } as React.CSSProperties}
           onAnimationEnd={() => setAnimateIn(false)}
         >
-          {/* Celebrate particles */}
           {isCelebrate && <Particles />}
 
           {/* Top bar */}
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '18px 22px 0',
-          }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 22px 0' }}>
             <XPBar xp={xp} />
           </div>
 
           {/* Step badge + skip */}
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '6px 22px 0',
-          }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 22px 0' }}>
             <div style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               background: step.accent + '18', borderRadius: 99,
@@ -476,11 +897,10 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
           </div>
 
           {/* Mascot + content */}
-          <div style={{ padding: '12px 28px 24px', display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+          <div style={{ padding: '12px 28px 8px', display: 'flex', gap: 20, alignItems: 'flex-start' }}>
             {/* Mascot column */}
             <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 8 }}>
               <AgriCoolLogo size={80} animate expression={step.expression} />
-              {/* Speech tail filler */}
               <div style={{
                 width: 2, flex: 1, minHeight: 16,
                 background: `linear-gradient(to bottom, ${step.accent}44, transparent)`,
@@ -500,31 +920,17 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
             }}>
               {/* Bubble tail */}
               <div style={{
-                position: 'absolute',
-                left: -10, top: 14,
+                position: 'absolute', left: -10, top: 14,
                 width: 0, height: 0,
                 borderTop: '10px solid transparent',
                 borderBottom: '0px solid transparent',
-                borderRight: `10px solid #fff`,
+                borderRight: '10px solid #fff',
               }} />
 
-              <h2 style={{
-                margin: '0 0 10px',
-                fontSize: 18,
-                fontWeight: 900,
-                color: '#14532d',
-                letterSpacing: '-0.3px',
-                lineHeight: 1.3,
-              }}>
+              <h2 style={{ margin: '0 0 10px', fontSize: 18, fontWeight: 900, color: '#14532d', letterSpacing: '-0.3px', lineHeight: 1.3 }}>
                 {step.title}
               </h2>
-              <p style={{
-                margin: '0 0 12px',
-                fontSize: 14,
-                color: '#374151',
-                lineHeight: 1.65,
-                fontWeight: 500,
-              }}>
+              <p style={{ margin: '0 0 12px', fontSize: 14, color: '#374151', lineHeight: 1.65, fontWeight: 500 }}>
                 {step.body}
               </p>
               {step.tip && (
@@ -533,10 +939,31 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
                   border: `1.5px solid ${step.accent}33`,
                   borderRadius: 10,
                   padding: '8px 12px',
+                  marginBottom: 4,
                 }}>
                   <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: step.accent, lineHeight: 1.5 }}>
                     {step.tip}
                   </p>
+                </div>
+              )}
+
+              {/* Interactive widgets */}
+              {step.interactive === 'queueCrop'     && <FakeCropQueue      onInteract={handleInteract} />}
+              {step.interactive === 'taskChecklist' && <FakeTaskChecklist  onInteract={handleInteract} />}
+              {step.interactive === 'photoUpload'   && <FakePhotoUpload    onInteract={handleInteract} />}
+              {step.interactive === 'tokenCounter'  && <FakeTokenCounter   onInteract={handleInteract} />}
+              {step.interactive === 'wiltRecovery'  && <FakeWiltRecovery   onInteract={handleInteract} />}
+              {step.interactive === 'harvestBadge'  && <FakeHarvestBadge   onInteract={handleInteract} />}
+              {step.interactive === 'leaderboard'   && <FakeLeaderboard    onInteract={handleInteract} />}
+
+              {/* Interaction nudge */}
+              {requiresInteraction && step.interactLabel && (
+                <div className="interact-hint" style={{
+                  marginTop: 10, fontSize: 11, fontWeight: 800,
+                  color: step.accent, letterSpacing: 0.3,
+                  display: 'flex', alignItems: 'center', gap: 4,
+                }}>
+                  👆 {step.interactLabel}
                 </div>
               )}
             </div>
@@ -562,8 +989,10 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
               className="tut-btn-primary"
               style={{ '--accent': step.accent, '--accent-glow': step.accent + '55' } as React.CSSProperties}
               onClick={goNext}
+              disabled={requiresInteraction}
+              title={requiresInteraction ? 'Complete the interaction above to continue' : ''}
             >
-              {isLast ? "🚀 Let's Farm!" : stepIdx === 0 ? "Let's go! →" : 'Got it! →'}
+              {isLast ? "🚀 Let's Farm!" : stepIdx === 0 ? "Let's go! →" : interacted || !step.interactive ? 'Got it! →' : 'Try it first →'}
             </button>
           </div>
 
@@ -595,33 +1024,3 @@ const GamifiedTutorial = ({ onComplete, onSkip }: GamifiedTutorialProps) => {
 };
 
 export default GamifiedTutorial;
-
-// ─── Usage in GamifiedDashboard ───────────────────────────────────────────────
-//
-// 1. Import and add state:
-//    import GamifiedTutorial from './GamifiedTutorial';
-//    const [showTutorial, setShowTutorial] = useState(false);
-//
-// 2. Show automatically for new users (no crops + first visit):
-//    useEffect(() => {
-//      if (!loading && crops.length === 0) {
-//        const seen = localStorage.getItem(`agricool_tutorial_seen_${user?.id}`);
-//        if (!seen) setShowTutorial(true);
-//      }
-//    }, [loading, crops.length]);
-//
-// 3. Mark as seen on complete or skip:
-//    const handleTutorialDone = () => {
-//      localStorage.setItem(`agricool_tutorial_seen_${user?.id}`, '1');
-//      setShowTutorial(false);
-//    };
-//
-// 4. Render in JSX (alongside other modals):
-//    {showTutorial && (
-//      <GamifiedTutorial
-//        onComplete={handleTutorialDone}
-//        onSkip={handleTutorialDone}
-//      />
-//    )}
-//
-// 5. Optionally add a "Replay tutorial" button in your header or settings.

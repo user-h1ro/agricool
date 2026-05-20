@@ -13,8 +13,7 @@ import { useLocation } from 'react-router-dom';
 // Notifications page plays Main.mp3 — Notifications.mp3 is a one-shot SFX only
 const ROUTE_TRACKS: { pattern: RegExp; track: string }[] = [
   { pattern: /^\/dashboard\/marketplace/, track: '/music/Market.mp3' },
-  { pattern: /^\/dashboard\/profile\/farm-location/, track: '/music/Enlisting.mp3' },
-  { pattern: /^\/dashboard/, track: '/music/Main.mp3' }, // covers all /dashboard/* incl. notifications
+  { pattern: /^\/dashboard/, track: '/music/Main.mp3' }, // covers all /dashboard/* incl. notifications, farm-location
   { pattern: /^\/register/, track: '/music/Login.mp3' },
   { pattern: /^\/reset-password/, track: '/music/Login.mp3' },
   { pattern: /^\//, track: '/music/Login.mp3' },
