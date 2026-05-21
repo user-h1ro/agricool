@@ -41,6 +41,10 @@ const MarketPlace = () => {
   const [editingCrop, setEditingCrop] = useState<any>(null);
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [showTutorial, setShowTutorial] = useState(false);
+  // Category filter: null = all
+  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+  // Sort mode: newest (default), price_asc, price_desc, near_me
+  const [sortMode, setSortMode] = useState<'newest' | 'price_asc' | 'price_desc'>('newest');
 
   const { onOpen, open, onClose } = useDisclosure();
   const navigate = useNavigate();
@@ -56,9 +60,19 @@ const MarketPlace = () => {
     if (data) setCropsList(data);
   };
 
-  const updateCartCount = () => {
-    const cart = JSON.parse(localStorage.getItem('agricool_cart') || '[]');
-    setCartCount(cart.length);
+  const updateCartCount = async () => {
+    if (user) {
+      // Supabase-backed cart (persistent across devices/sessions)
+      const { data } = await supabase
+        .from('cart_items')
+        .select('id')
+        .eq('user_id', user.id);
+      setCartCount(data?.length ?? 0);
+    } else {
+      // Fallback to localStorage for unauthenticated state
+      const cart = JSON.parse(localStorage.getItem('agricool_cart') || '[]');
+      setCartCount(cart.length);
+    }
   };
 
   useEffect(() => {
@@ -101,9 +115,12 @@ const MarketPlace = () => {
   };
 
   const filteredCrops = useMemo(() => {
-    let result = cropsList.filter((crop) =>
-      crop.name?.toLowerCase().includes(debouncedSearch.toLowerCase())
-    );
+    let result = cropsList.filter((crop) => {
+      const matchesSearch = crop.name?.toLowerCase().includes(debouncedSearch.toLowerCase());
+      const matchesCategory = !categoryFilter || crop.category === categoryFilter;
+      const notSold = !crop.is_sold; // hide sold items for non-owners
+      return matchesSearch && matchesCategory && notSold;
+    });
 
     if (showNearMe && userLocation) {
       result = [...result].sort((a, b) => {
@@ -113,13 +130,36 @@ const MarketPlace = () => {
         const distB = calculateDistance(userLocation[0], userLocation[1], b.latitude, b.longitude);
         return distA - distB;
       });
+    } else if (sortMode === 'price_asc') {
+      result = [...result].sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
+    } else if (sortMode === 'price_desc') {
+      result = [...result].sort((a, b) => (b.price ?? 0) - (a.price ?? 0));
     }
+    // default: newest (already ordered by created_at desc from DB)
     return result;
-  }, [cropsList, debouncedSearch, showNearMe, userLocation]);
+  }, [cropsList, debouncedSearch, showNearMe, userLocation, categoryFilter, sortMode]);
 
   const addToCart = async (crop: any) => {
-    const newCart = [...(JSON.parse(localStorage.getItem('agricool_cart') || '[]')), crop];
-    localStorage.setItem('agricool_cart', JSON.stringify(newCart));
+    if (user) {
+      // Check if already in cart
+      const { data: existing } = await supabase
+        .from('cart_items')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('crop_id', crop.id)
+        .maybeSingle();
+      if (!existing) {
+        await supabase.from('cart_items').insert({
+          user_id: user.id,
+          crop_id: crop.id,
+          crop_data: crop,
+        });
+      }
+    } else {
+      // localStorage fallback
+      const newCart = [...(JSON.parse(localStorage.getItem('agricool_cart') || '[]')), crop];
+      localStorage.setItem('agricool_cart', JSON.stringify(newCart));
+    }
     setAddedItem(crop);
     updateCartCount();
 
@@ -465,6 +505,64 @@ const MarketPlace = () => {
                 </Box>
               </Box>
             )}
+          </HStack>
+
+          {/* Category filter row */}
+          <HStack gap={2} mt={3} flexWrap="wrap">
+            {[
+              { key: null,          label: 'All',              emoji: '🌾' },
+              { key: 'leafy',       label: 'Leafy Greens',    emoji: '🥬' },
+              { key: 'fruit_veg',   label: 'Fruit Veg',       emoji: '🍅' },
+              { key: 'rootcrops',   label: 'Root Crops',      emoji: '🥕' },
+              { key: 'fruits',      label: 'Fruits',          emoji: '🍎' },
+              { key: 'herbs',       label: 'Herbs',           emoji: '🌿' },
+            ].map(cat => (
+              <Box
+                key={String(cat.key)}
+                as="button"
+                px={3} py={1}
+                borderRadius="full"
+                fontSize="12px"
+                fontWeight="700"
+                onClick={() => setCategoryFilter(categoryFilter === cat.key ? null : cat.key)}
+                style={{
+                  background: categoryFilter === cat.key ? '#3d5a2e' : 'white',
+                  color: categoryFilter === cat.key ? 'white' : '#5a4a2e',
+                  border: categoryFilter === cat.key ? '1.5px solid #3d5a2e' : '1.5px solid #c8b89a',
+                  cursor: 'pointer',
+                  transition: 'all 0.18s',
+                }}
+              >
+                {cat.emoji} {cat.label}
+              </Box>
+            ))}
+
+            {/* Sort pills */}
+            <Box ml="auto" display="flex" gap="6px">
+              {(['newest', 'price_asc', 'price_desc'] as const).map(mode => {
+                const labels = { newest: '🕐 Newest', price_asc: '₱ Low→High', price_desc: '₱ High→Low' };
+                return (
+                  <Box
+                    key={mode}
+                    as="button"
+                    px={3} py={1}
+                    borderRadius="full"
+                    fontSize="11px"
+                    fontWeight="700"
+                    onClick={() => { setSortMode(mode); setShowNearMe(false); }}
+                    style={{
+                      background: sortMode === mode && !showNearMe ? '#f59e0b' : 'white',
+                      color: sortMode === mode && !showNearMe ? 'white' : '#5a4a2e',
+                      border: '1.5px solid #c8b89a',
+                      cursor: 'pointer',
+                      transition: 'all 0.18s',
+                    }}
+                  >
+                    {labels[mode]}
+                  </Box>
+                );
+              })}
+            </Box>
           </HStack>
         </Box>
       </Box>

@@ -1,4 +1,5 @@
 import { Box, HStack, Text, IconButton, Button } from '@chakra-ui/react';
+import { useState } from 'react';
 import { LuTrash2, LuPencil, LuMapPin, LuFacebook } from 'react-icons/lu';
 import { useAuth } from '@/context/AuthProvider';
 import { supabase } from '@/supabase';
@@ -21,6 +22,16 @@ const CropCard = ({
 }: CropCardProps) => {
   const { user } = useAuth();
   const isOwner = user && user.id === crop.seller_id;
+  const [isSold, setIsSold] = useState(crop.is_sold ?? false);
+  const [markingAsSold, setMarkingAsSold] = useState(false);
+
+  const handleMarkAsSold = async () => {
+    setMarkingAsSold(true);
+    await supabase.from('crops').update({ is_sold: true }).eq('id', crop.id);
+    setIsSold(true);
+    setMarkingAsSold(false);
+    onDelete?.(); // refresh parent list
+  };
 
   let distanceText = '';
   if (userLocation && crop.latitude && crop.longitude) {
@@ -77,6 +88,16 @@ const CropCard = ({
         <Text fontSize="3rem" lineHeight="1" style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.12))' }}>
           {crop.emoji || '🌱'}
         </Text>
+        {isSold && (
+          <Box
+            position="absolute" top="8px" right="8px"
+            px={2} py={0.5}
+            borderRadius="6px"
+            style={{ background: 'rgba(100,116,139,0.9)', color: 'white', fontSize: '10px', fontWeight: '800', letterSpacing: '0.05em' }}
+          >
+            SOLD
+          </Box>
+        )}
 
         {/* Category pill */}
         <Box
@@ -252,23 +273,54 @@ const CropCard = ({
         {/* Action Buttons */}
         <HStack mt={3} gap={2}>
           {isOwner ? (
-            <Button
-              size="sm"
-              flex={1}
-              onClick={() => onEdit?.(crop)}
-              style={{
-                background: '#f59e0b',
-                color: 'white',
-                borderRadius: '9px',
-                fontWeight: '600',
-                fontSize: '13px',
-                cursor: 'pointer',
-                border: 'none',
-                height: '36px',
-              }}
-            >
-              ✏️ Edit Listing
-            </Button>
+            isSold ? (
+              <Box
+                flex={1} h="36px" borderRadius="9px"
+                display="flex" alignItems="center" justifyContent="center"
+                style={{ background: '#f1f5f9', border: '1.5px solid #cbd5e1', fontSize: '13px', fontWeight: '700', color: '#64748b' }}
+              >
+                ✅ Sold
+              </Box>
+            ) : (
+              <HStack gap={2} flex={1}>
+                <Button
+                  size="sm"
+                  flex={1}
+                  onClick={() => onEdit?.(crop)}
+                  style={{
+                    background: '#f59e0b',
+                    color: 'white',
+                    borderRadius: '9px',
+                    fontWeight: '600',
+                    fontSize: '13px',
+                    cursor: 'pointer',
+                    border: 'none',
+                    height: '36px',
+                  }}
+                >
+                  ✏️ Edit
+                </Button>
+                <Button
+                  size="sm"
+                  flex={1}
+                  onClick={handleMarkAsSold}
+                  disabled={markingAsSold}
+                  style={{
+                    background: '#16a34a',
+                    color: 'white',
+                    borderRadius: '9px',
+                    fontWeight: '600',
+                    fontSize: '12px',
+                    cursor: 'pointer',
+                    border: 'none',
+                    height: '36px',
+                    opacity: markingAsSold ? 0.6 : 1,
+                  }}
+                >
+                  {markingAsSold ? '…' : '✅ Sold'}
+                </Button>
+              </HStack>
+            )
           ) : (
             <>
               <Button

@@ -107,20 +107,72 @@ function getXpToNextLevel(xp: number): { current: number; needed: number; pct: n
   return { current, needed, pct: Math.min(100, (current / needed) * 100) };
 }
 
+// ── XP: Supabase-backed (localStorage as fast cache, DB as source of truth) ──
+async function loadFarmerXPFromDB(userId: string): Promise<number> {
+  try {
+    const { data } = await supabase
+      .from('farmer_progress')
+      .select('xp')
+      .eq('user_id', userId)
+      .maybeSingle();
+    const xp = data?.xp ?? 0;
+    // keep local cache in sync
+    try { localStorage.setItem(`agricool_xp_${userId}`, String(xp)); } catch {}
+    return xp;
+  } catch {
+    // fall back to cache
+    try { return parseInt(localStorage.getItem(`agricool_xp_${userId}`) ?? '0') || 0; } catch { return 0; }
+  }
+}
+
 function getFarmerXP(userId: string): number {
+  // fast local read — caller should hydrate from DB on mount
   try { return parseInt(localStorage.getItem(`agricool_xp_${userId}`) ?? '0') || 0; } catch { return 0; }
 }
-function setFarmerXP(userId: string, xp: number) {
-  try { localStorage.setItem(`agricool_xp_${userId}`, String(xp)); } catch {}
+
+async function addFarmerXPToDB(
+  userId: string,
+  amount: number,
+): Promise<{ newXp: number; leveledUp: boolean; newLevel: typeof FARMER_LEVELS[0] | null }> {
+  const old = getFarmerXP(userId);
+  const oldLevel = getFarmerLevel(old);
+  const newXp = old + amount;
+  const newLevel = getFarmerLevel(newXp);
+  // update local cache immediately for responsive UI
+  try { localStorage.setItem(`agricool_xp_${userId}`, String(newXp)); } catch {}
+  // persist to DB (upsert into farmer_progress)
+  supabase.from('farmer_progress').upsert({ user_id: userId, xp: newXp });
+  const leveledUp = newLevel.level > oldLevel.level;
+  return { newXp, leveledUp, newLevel: leveledUp ? newLevel : null };
 }
+
+// Legacy sync shim — only used for non-async reads before DB hydration
 function addFarmerXP(userId: string, amount: number): { newXp: number; leveledUp: boolean; newLevel: typeof FARMER_LEVELS[0] | null } {
   const old = getFarmerXP(userId);
   const oldLevel = getFarmerLevel(old);
   const newXp = old + amount;
   const newLevel = getFarmerLevel(newXp);
-  setFarmerXP(userId, newXp);
+  try { localStorage.setItem(`agricool_xp_${userId}`, String(newXp)); } catch {}
+  supabase.from('farmer_progress').upsert({ user_id: userId, xp: newXp });
   const leveledUp = newLevel.level > oldLevel.level;
   return { newXp, leveledUp, newLevel: leveledUp ? newLevel : null };
+}
+
+// ── AgriCoin bridge: award coins in garden_state from tracker actions ─────────
+async function awardGardenCoins(userId: string, amount: number): Promise<void> {
+  try {
+    const { data } = await supabase
+      .from('garden_state')
+      .select('coins')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (data != null) {
+      await supabase.from('garden_state').upsert({
+        user_id: userId,
+        coins: (data.coins ?? 0) + amount,
+      });
+    }
+  } catch { /* silent — garden may not be initialised yet */ }
 }
 
 // ─── Achievement System ───────────────────────────────────────────────────────
@@ -148,11 +200,30 @@ function getUnlockedAchievements(userId: string): Set<string> {
     return new Set(raw ? JSON.parse(raw) : []);
   } catch { return new Set(); }
 }
+
+async function loadAchievementsFromDB(userId: string): Promise<Set<string>> {
+  try {
+    const { data } = await supabase
+      .from('farmer_progress')
+      .select('achievements')
+      .eq('user_id', userId)
+      .maybeSingle();
+    const ids: string[] = data?.achievements ?? [];
+    try { localStorage.setItem(`agricool_achievements_${userId}`, JSON.stringify(ids)); } catch {}
+    return new Set(ids);
+  } catch {
+    return getUnlockedAchievements(userId);
+  }
+}
+
 function unlockAchievement(userId: string, id: string): boolean {
   const unlocked = getUnlockedAchievements(userId);
   if (unlocked.has(id)) return false;
   unlocked.add(id);
-  try { localStorage.setItem(`agricool_achievements_${userId}`, JSON.stringify([...unlocked])); } catch {}
+  const arr = [...unlocked];
+  try { localStorage.setItem(`agricool_achievements_${userId}`, JSON.stringify(arr)); } catch {}
+  // persist to DB
+  supabase.from('farmer_progress').upsert({ user_id: userId, achievements: arr });
   return true;
 }
 
@@ -172,6 +243,9 @@ const QUEST_POOL: DailyQuest[] = [
   { id: 'q_task_all', icon: '⚡', title: 'Zero Fails',      desc: 'Complete all tasks today without any failing', target: 1, xp: 90,  type: 'task'   },
 ];
 
+// QuestProgress: { [questId]: { progress: number; completed: boolean } }
+type QuestProgressMap = Record<string, { progress: number; completed: boolean }>;
+
 function getDailyQuests(userId: string): DailyQuest[] {
   const today = new Date().toISOString().slice(0, 10);
   const key = `agricool_quests_${userId}_${today}`;
@@ -186,6 +260,25 @@ function getDailyQuests(userId: string): DailyQuest[] {
   const quests = [q1, q2, q3].filter((q, i, a) => a.findIndex(x => x.id === q.id) === i).slice(0, 3);
   try { localStorage.setItem(key, JSON.stringify(quests)); } catch {}
   return quests;
+}
+
+function getQuestProgress(userId: string): QuestProgressMap {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    const raw = localStorage.getItem(`agricool_quest_progress_${userId}_${today}`);
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+
+function saveQuestProgress(userId: string, progress: QuestProgressMap) {
+  const today = new Date().toISOString().slice(0, 10);
+  try { localStorage.setItem(`agricool_quest_progress_${userId}_${today}`, JSON.stringify(progress)); } catch {}
+  // also persist to DB
+  supabase.from('farmer_progress').upsert({
+    user_id: userId,
+    quest_progress_date: today,
+    quest_progress: progress,
+  });
 }
 
 // ─── NTP-synced Server Clock ──────────────────────────────────────────────────
@@ -1494,14 +1587,18 @@ const XPPopup = ({ amount, label, onDone }: { amount: number; label: string; onD
 };
 
 // ─── Daily Quest Panel ────────────────────────────────────────────────────────
-const DailyQuestPanel = ({ userId, dailyStats }: {
+const DailyQuestPanel = ({ userId, dailyStats, questProgress }: {
   userId: string;
   dailyStats: { verifies: number; tasksCompleted: number; bestStreak: number; tokensEarned: number; allTasksPassed: boolean };
+  questProgress: QuestProgressMap;
 }) => {
   const quests = getDailyQuests(userId);
-  const today = new Date().toISOString().slice(0, 10);
 
+  // Use persisted questProgress when available, fall back to live derived stats
   const getProgress = (q: DailyQuest): number => {
+    // persisted progress (survives page refresh)
+    if (questProgress[q.id] !== undefined) return questProgress[q.id].progress;
+    // live fallback for first session before any action fires
     switch (q.type) {
       case 'verify': return Math.min(q.target, dailyStats.verifies);
       case 'task':   return q.id === 'q_task_all'
@@ -2000,35 +2097,67 @@ const GamifiedDashboard = () => {
   // Daily quest stats (tracked in memory, refreshed on actions)
   const [dailyVerifies, setDailyVerifies] = useState(0);
   const [dailyTokensEarned, setDailyTokensEarned] = useState(0);
+  // Quest progress: keyed by quest id, tracks current count + completion
+  const [questProgress, setQuestProgress] = useState<QuestProgressMap>({});
 
-  // Load XP on mount / user change
+  // Load XP + achievements + quest progress from Supabase on mount
   useEffect(() => {
-    if (user) setFarmerXP_state(getFarmerXP(user.id));
+    if (!user) return;
+    // Fast local seed first (no flicker)
+    setFarmerXP_state(getFarmerXP(user.id));
+    // Then hydrate from DB (source of truth)
+    loadFarmerXPFromDB(user.id).then(xp => setFarmerXP_state(xp));
+    loadAchievementsFromDB(user.id); // syncs cache only
+    setQuestProgress(getQuestProgress(user.id));
   }, [user]);
 
   const awardXP = useCallback((amount: number, label: string) => {
     if (!user) return;
-    const result = addFarmerXP(user.id, amount);
-    setFarmerXP_state(result.newXp);
-    setXpPopup({ amount, label });
-    if (result.leveledUp && result.newLevel) {
-      setConfetti(true);
-      setTimeout(() => setLevelUpData(result.newLevel), 600);
-      // Achievement: level 5
-      if (result.newLevel.level >= 5) {
-        if (unlockAchievement(user.id, 'level_5')) {
-          const a = ACHIEVEMENTS.find(x => x.id === 'level_5')!;
-          setTimeout(() => setPendingAchievement(a), 2000);
+    // async path: write to Supabase, update local state when resolved
+    addFarmerXPToDB(user.id, amount).then(result => {
+      setFarmerXP_state(result.newXp);
+      setXpPopup({ amount, label });
+      if (result.leveledUp && result.newLevel) {
+        setConfetti(true);
+        setTimeout(() => setLevelUpData(result.newLevel), 600);
+        if (result.newLevel.level >= 5) {
+          if (unlockAchievement(user.id, 'level_5')) {
+            const a = ACHIEVEMENTS.find(x => x.id === 'level_5')!;
+            setTimeout(() => setPendingAchievement(a), 2000);
+          }
+        }
+        if (result.newLevel.level >= 10) {
+          if (unlockAchievement(user.id, 'harvest_king')) {
+            const a = ACHIEVEMENTS.find(x => x.id === 'harvest_king')!;
+            setTimeout(() => setPendingAchievement(a), 2000);
+          }
         }
       }
-      if (result.newLevel.level >= 10) {
-        if (unlockAchievement(user.id, 'harvest_king')) {
-          const a = ACHIEVEMENTS.find(x => x.id === 'harvest_king')!;
-          setTimeout(() => setPendingAchievement(a), 2000);
-        }
-      }
-    }
+    });
   }, [user]);
+
+  // ── Quest progress helper ────────────────────────────────────────────────
+  const advanceQuest = useCallback((type: DailyQuest['type'], increment = 1) => {
+    if (!user) return;
+    const quests = getDailyQuests(user.id);
+    setQuestProgress(prev => {
+      const next = { ...prev };
+      quests.forEach(q => {
+        if (q.type !== type) return;
+        const cur = next[q.id] ?? { progress: 0, completed: false };
+        if (cur.completed) return;
+        const newProgress = Math.min(cur.progress + increment, q.target);
+        const justCompleted = newProgress >= q.target;
+        next[q.id] = { progress: newProgress, completed: justCompleted };
+        if (justCompleted) {
+          awardXP(q.xp, `Quest: ${q.title}`);
+          showToast(`⚡ Quest complete: "${q.title}"! +${q.xp} XP`);
+        }
+      });
+      saveQuestProgress(user.id, next);
+      return next;
+    });
+  }, [user, awardXP]);
 
   const checkAndUnlockAchievement = useCallback((id: string) => {
     if (!user) return;
@@ -2273,10 +2402,10 @@ const GamifiedDashboard = () => {
       setConfetti(true);
       awardXP(XP_TABLE.tokenEarned, 'Token Earned');
       setDailyTokensEarned(t => t + 1);
+      advanceQuest('token');
       checkAndUnlockAchievement('first_token');
       const allCropTokens = crops.reduce((s, c) => s + Math.floor(c.progress_points / 2), 0);
       if (allCropTokens + 1 >= 5) checkAndUnlockAchievement('five_tokens');
-      // daily quest progress tracked via dailyTokensEarned state above
     } else if (isRecovery) {
       showToast(`🌿 Recovery submitted. Plant is back on track.`);
       awardXP(XP_TABLE.recovery, 'Recovery');
@@ -2285,8 +2414,8 @@ const GamifiedDashboard = () => {
       showToast(`✅ Verified! +1 progress point for ${crop.name}. 🤖 ${aiNote}`);
       awardXP(XP_TABLE.verify, 'Verification');
       setDailyVerifies(v => v + 1);
+      advanceQuest('verify');
       checkAndUnlockAchievement('first_verify');
-      // daily quest progress tracked via dailyVerifies state above
     }
 
     // Streak bonus at 3+
@@ -2296,12 +2425,12 @@ const GamifiedDashboard = () => {
       showToast(`🔥 ${newStreak}-streak bonus! +1 extra token earned!`);
       awardXP(XP_TABLE.streakBonus, `${newStreak}-Streak Bonus`);
       setConfetti(true);
+      advanceQuest('streak');
       checkAndUnlockAchievement('streak_3');
       if (newStreak >= 5) checkAndUnlockAchievement('streak_5');
-      // daily quest: streak progress derived from bestStreak (computed from crops)
     } else if (!isRecovery && newStreak >= 3) {
+      advanceQuest('streak');
       checkAndUnlockAchievement('streak_3');
-      // daily quest: streak progress derived from bestStreak (computed from crops)
     }
 
     setSaving(false);
@@ -2346,6 +2475,8 @@ const GamifiedDashboard = () => {
     checkAndUnlockAchievement('first_harvest');
     const harvestedCount = crops.filter(c => c.status === 'harvest_ready').length + 1;
     if (harvestedCount >= 3) checkAndUnlockAchievement('three_harvests');
+    // Award AgriCoins in garden for harvesting
+    awardGardenCoins(user.id, 30);
   };
 
   // ── Delete crop ───────────────────────────────────────────────────────────
@@ -2407,7 +2538,9 @@ const GamifiedDashboard = () => {
     setTasks(prev => prev.map(t => t.id === id ? { ...t, done: newDone } : t));
     if (newDone && user) {
       awardXP(XP_TABLE.taskDone, 'Task Complete');
-      // daily quest progress tracked via doneTasks (derived from tasks state)
+      advanceQuest('task');
+      // Award AgriCoins in garden for completing a task
+      awardGardenCoins(user.id, 5);
     }
   };
 
@@ -2582,7 +2715,7 @@ const GamifiedDashboard = () => {
         <FarmerProfileCard userId={user?.id ?? ''} username={username} totalTokens={totalTokens} />
 
         {/* ── Daily Quests ── */}
-        {user && <DailyQuestPanel userId={user.id} dailyStats={dailyStatsForQuests} />}
+        {user && <DailyQuestPanel userId={user.id} dailyStats={dailyStatsForQuests} questProgress={questProgress} />}
 
         {/* ── Stats ── */}
         <Flex gap={3} mb={6} wrap="wrap">

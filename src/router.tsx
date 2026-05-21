@@ -21,6 +21,7 @@ const Cart = lazy(() => import('@/pages/Cart/Cart'));
 
 const GamifiedDashboard = lazy(() => import('@/pages/GamifiedDashboard/GamifiedDashboard'));
 const ClimateTracker = lazy(() => import('@/pages/ClimateTracker/ClimateTracker'));
+const Garden = lazy(() => import('@/pages/Garden'));
 
 const LoadingFallback = () => (
   <Center width="100%" height="100vh">
@@ -163,6 +164,14 @@ export const routes: RouteObject[] = [
         element: (
           <Suspense fallback={<LoadingFallback />}>
             <Cart />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'garden',
+        element: (
+          <Suspense fallback={<LoadingFallback />}>
+            <Garden />
           </Suspense>
         ),
       },

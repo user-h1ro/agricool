@@ -10,10 +10,9 @@ import {
 import { useLocation } from 'react-router-dom';
 
 // ─── Route → background music ─────────────────────────────────────────────────
-// Notifications page plays Main.mp3 — Notifications.mp3 is a one-shot SFX only
 const ROUTE_TRACKS: { pattern: RegExp; track: string }[] = [
   { pattern: /^\/dashboard\/marketplace/, track: '/music/Market.mp3' },
-  { pattern: /^\/dashboard/, track: '/music/Main.mp3' }, // covers all /dashboard/* incl. notifications, farm-location
+  { pattern: /^\/dashboard/, track: '/music/Main.mp3' },
   { pattern: /^\/register/, track: '/music/Login.mp3' },
   { pattern: /^\/reset-password/, track: '/music/Login.mp3' },
   { pattern: /^\//, track: '/music/Login.mp3' },
@@ -34,10 +33,10 @@ interface MusicContextValue {
   setVolume: (v: number) => void;
   currentTrack: string;
   isPlaying: boolean;
-  /** Call when a crop listing is successfully added */
   playEnlistingSound: () => void;
-  /** Call once per new notification received */
   playNotificationSound: () => void;
+  /** Call when coins are earned — plays a satisfying coin chime */
+  playCoinSound: () => void;
 }
 
 const MusicContext = createContext<MusicContextValue | null>(null);
@@ -55,14 +54,51 @@ function createSfx(src: string, vol = 0.7): HTMLAudioElement {
   return a;
 }
 
+// ─── Web Audio coin chime (no extra file needed) ──────────────────────────────
+function playCoinChime(muted: boolean) {
+  if (muted) return;
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+
+    // Three quick ascending notes — classic coin collect sound
+    const notes = [
+      { freq: 880,  start: 0,    dur: 0.08 },
+      { freq: 1100, start: 0.07, dur: 0.08 },
+      { freq: 1320, start: 0.14, dur: 0.14 },
+    ];
+
+    notes.forEach(({ freq, start, dur }) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + start);
+
+      gain.gain.setValueAtTime(0, ctx.currentTime + start);
+      gain.gain.linearRampToValueAtTime(0.28, ctx.currentTime + start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + dur);
+
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + dur + 0.05);
+    });
+
+    // Auto-close after sound finishes
+    setTimeout(() => ctx.close(), 600);
+  } catch {
+    // AudioContext unavailable — silently skip
+  }
+}
+
 // ─── Provider ─────────────────────────────────────────────────────────────────
 export function MusicProvider({ children }: PropsWithChildren) {
   const location = useLocation();
 
-  const bgRef         = useRef<HTMLAudioElement | null>(null);
-  const clickSfxRef   = useRef<HTMLAudioElement | null>(null);
-  const enlistSfxRef  = useRef<HTMLAudioElement | null>(null);
-  const notifSfxRef   = useRef<HTMLAudioElement | null>(null);
+  const bgRef        = useRef<HTMLAudioElement | null>(null);
+  const clickSfxRef  = useRef<HTMLAudioElement | null>(null);
+  const enlistSfxRef = useRef<HTMLAudioElement | null>(null);
+  const notifSfxRef  = useRef<HTMLAudioElement | null>(null);
 
   const [currentTrack, setCurrentTrack] = useState('');
   const [isPlaying, setIsPlaying]       = useState(false);
@@ -113,7 +149,7 @@ export function MusicProvider({ children }: PropsWithChildren) {
     return () => window.removeEventListener('click', handleClick);
   }, [isMuted]);
 
-  // ── Resume bg after first user interaction (browser autoplay policy) ────
+  // ── Resume bg after first user interaction ───────────────────────────────
   useEffect(() => {
     const resume = () => {
       if (pendingPlay.current && bgRef.current && !isMuted) {
@@ -187,11 +223,15 @@ export function MusicProvider({ children }: PropsWithChildren) {
     sfx.play().catch(() => {});
   }, [isMuted]);
 
+  const playCoinSound = useCallback(() => {
+    playCoinChime(isMuted);
+  }, [isMuted]);
+
   return (
     <MusicContext.Provider value={{
       isMuted, toggleMute, volume, setVolume,
       currentTrack, isPlaying,
-      playEnlistingSound, playNotificationSound,
+      playEnlistingSound, playNotificationSound, playCoinSound,
     }}>
       {children}
     </MusicContext.Provider>
