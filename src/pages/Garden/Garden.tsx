@@ -1029,15 +1029,19 @@ const Garden = () => {
   const gardenStateRef = useRef<GardenState | null>(null);
   useEffect(() => { gardenStateRef.current = gardenState; }, [gardenState]);
 
-  const update = useCallback((patch: Partial<GardenState>) => {
+  const update = useCallback(async (patch: Partial<GardenState>) => {
     if (!user || !gardenStateRef.current) return;
     const current = gardenStateRef.current;
     const prevCoins = current.coins;
     const next = { ...current, ...patch };
     gardenStateRef.current = next;          // keep ref in sync immediately
     setGardenState(next);
-    // Persist to DB — uses latest state, not stale closure
-    supabase.from('garden_state').upsert(stateToDbRow(user.id, next));
+    // BUG FIX: upsert was fire-and-forget (not awaited). If the user navigated
+    // away before the network request completed, the DB never got updated, so
+    // coins and claimed events were lost on the next page load.
+    // Now we await the upsert so changes are always persisted before the
+    // component can unmount (the caller may optionally await this too).
+    await supabase.from('garden_state').upsert(stateToDbRow(user.id, next));
     // Fire coin animation event if coin count changed
     if (next.coins !== prevCoins) {
       dispatchCoinEvent(next.coins - prevCoins, next.coins, lastClickPos.current);
@@ -1104,7 +1108,7 @@ const Garden = () => {
     update({ equippedCosmetics: gardenState.equippedCosmetics.filter(c => c !== id) });
   };
 
-  const handleClaimEvent = (ev: SeasonalEvent) => {
+  const handleClaimEvent = async (ev: SeasonalEvent) => {
     if (!gardenState) return;
     if (gardenState.claimedEvents.includes(ev.id)) return;
     const claimedEvents    = [...gardenState.claimedEvents, ev.id];
@@ -1112,7 +1116,9 @@ const Garden = () => {
     if (ev.rewardCosmeticId && !unlockedCosmetics.includes(ev.rewardCosmeticId)) {
       unlockedCosmetics.push(ev.rewardCosmeticId);
     }
-    update({ claimedEvents, coins: gardenState.coins + COIN_REWARDS.eventBonus, unlockedCosmetics });
+    // BUG FIX: await update() so the upsert completes before the user can
+    // navigate away — prevents claimed state and coins from being lost on revisit.
+    await update({ claimedEvents, coins: gardenState.coins + COIN_REWARDS.eventBonus, unlockedCosmetics });
     showToast(`🎁 Event bonus claimed! +${COIN_REWARDS.eventBonus} 🪙`);
   };
 

@@ -134,7 +134,12 @@ async function addFarmerXPToDB(
   userId: string,
   amount: number,
 ): Promise<{ newXp: number; leveledUp: boolean; newLevel: typeof FARMER_LEVELS[0] | null }> {
-  const old = getFarmerXP(userId);
+  // BUG FIX: always read XP from DB (source of truth) before computing the new
+  // value.  The old code read only from localStorage, which starts at 0 on every
+  // fresh page load BEFORE loadFarmerXPFromDB has had a chance to hydrate it.
+  // That caused the level comparison to treat current XP as 0, so any award
+  // appeared to "level up" from level 1 even when the user was already higher.
+  const old = await loadFarmerXPFromDB(userId);
   const oldLevel = getFarmerLevel(old);
   const newXp = old + amount;
   const newLevel = getFarmerLevel(newXp);
@@ -1672,13 +1677,14 @@ const DailyQuestPanel = ({ userId, dailyStats, questProgress }: {
 };
 
 // ─── Farmer Profile Card ──────────────────────────────────────────────────────
-const FarmerProfileCard = ({ userId, username, totalTokens }: {
-  userId: string; username: string; totalTokens: number;
+const FarmerProfileCard = ({ userId, username, totalTokens, seed }: {
+  userId: string; username: string; totalTokens: number; seed?: number;
 }) => {
   const [xp, setXp] = useState(0);
   useEffect(() => { setXp(getFarmerXP(userId)); }, [userId]);
   const level = getFarmerLevel(xp);
   const { current, needed, pct } = getXpToNextLevel(xp);
+  // BUG FIX: re-read achievements when seed bumps (after async DB hydration)
   const unlocked = getUnlockedAchievements(userId);
 
   return (
@@ -1856,9 +1862,11 @@ const DramaticLeaderboard = ({ currentUserId }: { currentUserId: string }) => {
 };
 
 // ─── Achievement Gallery ──────────────────────────────────────────────────────
-const AchievementGallery = ({ userId }: { userId: string }) => {
+const AchievementGallery = ({ userId, seed }: { userId: string; seed?: number }) => {
   const [unlocked, setUnlocked] = useState<Set<string>>(new Set());
-  useEffect(() => { setUnlocked(getUnlockedAchievements(userId)); }, [userId]);
+  // BUG FIX: also re-read whenever `seed` bumps (after async DB hydration)
+  // so achievements earned in previous sessions appear immediately.
+  useEffect(() => { setUnlocked(getUnlockedAchievements(userId)); }, [userId, seed]);
   const rarityOrder: Record<string, number> = { legendary: 0, epic: 1, rare: 2, common: 3 };
   const sorted = [...ACHIEVEMENTS].sort((a, b) => (rarityOrder[a.rarity] ?? 3) - (rarityOrder[b.rarity] ?? 3));
   const rarityColors: Record<string, string> = { common: '#22c55e', rare: '#3b82f6', epic: '#a855f7', legendary: '#f59e0b' };
@@ -2092,6 +2100,9 @@ const GamifiedDashboard = () => {
   const [farmerXP, setFarmerXP_state] = useState(0);
   const [levelUpData, setLevelUpData] = useState<typeof FARMER_LEVELS[0] | null>(null);
   const [pendingAchievement, setPendingAchievement] = useState<Achievement | null>(null);
+  // BUG FIX: used to force AchievementGallery to re-read localStorage after
+  // async DB hydration completes (see achievementSeed in useEffect below).
+  const [achievementSeed, setAchievementSeed] = useState(0);
   const [xpPopup, setXpPopup] = useState<{ amount: number; label: string } | null>(null);
   const [confetti, setConfetti] = useState(false);
   // Daily quest stats (tracked in memory, refreshed on actions)
@@ -2107,7 +2118,15 @@ const GamifiedDashboard = () => {
     setFarmerXP_state(getFarmerXP(user.id));
     // Then hydrate from DB (source of truth)
     loadFarmerXPFromDB(user.id).then(xp => setFarmerXP_state(xp));
-    loadAchievementsFromDB(user.id); // syncs cache only
+    // BUG FIX: loadAchievementsFromDB was called but its result was discarded,
+    // so AchievementGallery never saw achievements stored in DB — it only read
+    // from localStorage which starts empty on a fresh browser session.
+    // Now we propagate the DB result into component state so the gallery re-renders.
+    loadAchievementsFromDB(user.id).then(() => {
+      // achievements are written to localStorage by loadAchievementsFromDB;
+      // force AchievementGallery to re-read by bumping a counter it depends on.
+      setAchievementSeed(s => s + 1);
+    });
     setQuestProgress(getQuestProgress(user.id));
   }, [user]);
 
@@ -2712,7 +2731,7 @@ const GamifiedDashboard = () => {
         </HStack>
 
         {/* ── Farmer Profile ── */}
-        <FarmerProfileCard userId={user?.id ?? ''} username={username} totalTokens={totalTokens} />
+        <FarmerProfileCard userId={user?.id ?? ''} username={username} totalTokens={totalTokens} seed={achievementSeed} />
 
         {/* ── Daily Quests ── */}
         {user && <DailyQuestPanel userId={user.id} dailyStats={dailyStatsForQuests} questProgress={questProgress} />}
@@ -2966,7 +2985,7 @@ const GamifiedDashboard = () => {
 
           {/* ACHIEVEMENTS TAB */}
           <Tabs.Content value="4">
-            <AchievementGallery userId={user?.id ?? ''} />
+            <AchievementGallery userId={user?.id ?? ''} seed={achievementSeed} />
           </Tabs.Content>
 
         </Tabs.Root>
