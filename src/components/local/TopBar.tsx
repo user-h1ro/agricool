@@ -56,19 +56,16 @@ const TopBar = () => {
   const coinBadgeRef = useRef<HTMLDivElement>(null);
   const particleId   = useRef(0);
 
-  // Read coins from localStorage for this user
-  const readCoins = useCallback((uid: string): number => {
-    try {
-      const raw = localStorage.getItem(`agricool_garden_${uid}`);
-      return raw ? (JSON.parse(raw) as { coins: number }).coins : 0;
-    } catch { return 0; }
-  }, []);
 
-  // Init coin display on mount / user change
+  // Init coin display on mount — read from Supabase (source of truth), not localStorage
   useEffect(() => {
     if (!user) return;
-    setCoins(readCoins(user.id));
-  }, [user, readCoins]);
+    supabase.from('garden_state').select('coins').eq('user_id', user.id).maybeSingle()
+      .then(({ data }) => {
+        if (data?.coins != null) setCoins(data.coins);
+        // else leave at 0 — garden hasn't been initialised yet
+      });
+  }, [user]);
 
   // Listen for coin change events dispatched by Garden.tsx
   useEffect(() => {

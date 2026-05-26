@@ -1105,7 +1105,10 @@ const CropCard = ({
           <Box flex={1} bg="#f0fdf4" borderRadius="10px" px={3} py={2} textAlign="center">
             <Text fontSize="10px" color="#16a34a" fontWeight="700">Verifications done</Text>
             <Text fontSize="11px" color="#14532d" fontWeight="800">
-              {crop.last_verified_window + 1 >= 0 ? crop.last_verified_window + 1 : 0}
+              {/* BUG FIX: last_verified_window is a window index, not a count.
+                  Use progress_points as the accurate tally (each successful
+                  verify adds +1; recoveries are also photo submissions). */}
+              {Math.max(0, crop.progress_points)}
             </Text>
           </Box>
         </HStack>
@@ -1122,18 +1125,19 @@ const CropCard = ({
 };
 
 // ─── Journal Timeline ─────────────────────────────────────────────────────────
-const JournalTimeline = ({ userId }: { userId: string }) => {
+const JournalTimeline = ({ userId, seed }: { userId: string; seed?: number }) => {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    setLoading(true);
     supabase.from('crop_journal').select('*').eq('user_id', userId)
       .order('verified_at', { ascending: false })
       .then(({ data }) => {
         if (data) setEntries(data as JournalEntry[]);
         setLoading(false);
       });
-  }, [userId]);
+  }, [userId, seed]);
 
   if (loading) return <Center py={8}><Spinner color="#16a34a" /></Center>;
 
@@ -1300,6 +1304,195 @@ const Leaderboard = ({ currentUserId }: { currentUserId: string }) => {
 };
 
 // ─── Notifications Panel ──────────────────────────────────────────────────────
+// ─── Upcoming Crop Tasks ──────────────────────────────────────────────────────
+// Shows the next 3 days of scheduled care tasks for each active crop so the
+// user can plan ahead beyond today's reminders.
+const UpcomingCropTasks = ({
+  crops,
+  serverTime,
+}: {
+  crops: TrackedCrop[];
+  serverTime: Date;
+}) => {
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  // Build upcoming task schedule: for each non-wilted crop, list tasks for
+  // today-remaining + next 2 days (max 3 days ahead total).
+  const DAYS_AHEAD = 3;
+  const todayStr = serverTime.toISOString().slice(0, 10);
+  const currentHour   = serverTime.getHours();
+  const currentMinute = serverTime.getMinutes();
+
+  const activeCrops = crops.filter(c => c.status !== 'wilted');
+
+  if (activeCrops.length === 0) return null;
+
+  // For a given date offset (0 = today, 1 = tomorrow, etc.) build the label
+  function dayLabel(offset: number): string {
+    if (offset === 0) return 'Today';
+    if (offset === 1) return 'Tomorrow';
+    const d = new Date(serverTime);
+    d.setDate(d.getDate() + offset);
+    return d.toLocaleDateString('en-PH', { weekday: 'long', month: 'short', day: 'numeric' });
+  }
+
+  type ScheduledTask = {
+    time: string;
+    hour: number;
+    minute: number;
+    message: string;
+    dayOffset: number;
+    dayLabel: string;
+    isPast: boolean; // today-only: already passed
+  };
+
+  const cropSchedules = activeCrops.map(crop => {
+    const templates = CROP_NOTIFICATIONS[crop.name] ?? DEFAULT_NOTIFICATIONS;
+    const tasks: ScheduledTask[] = [];
+
+    for (let offset = 0; offset < DAYS_AHEAD; offset++) {
+      for (const t of templates) {
+        const [hStr, mStr] = t.time.split(':');
+        const hour   = parseInt(hStr);
+        const minute = parseInt(mStr ?? '0');
+
+        // For today, skip tasks that have already passed
+        if (offset === 0) {
+          const alreadyPast =
+            hour < currentHour || (hour === currentHour && minute <= currentMinute);
+          if (alreadyPast) continue;
+        }
+
+        tasks.push({
+          time: t.time,
+          hour,
+          minute,
+          message: t.message,
+          dayOffset: offset,
+          dayLabel: dayLabel(offset),
+          isPast: false,
+        });
+      }
+    }
+
+    // Sort by day offset then time
+    tasks.sort((a, b) => a.dayOffset - b.dayOffset || a.hour - b.hour || a.minute - b.minute);
+
+    return { crop, tasks };
+  });
+
+  // Only show crops that actually have upcoming tasks
+  const withTasks = cropSchedules.filter(cs => cs.tasks.length > 0);
+  if (withTasks.length === 0) return null;
+
+  // Group tasks by day label for display
+  function groupByDay(tasks: ScheduledTask[]): { label: string; tasks: ScheduledTask[] }[] {
+    const map: Record<string, ScheduledTask[]> = {};
+    const order: string[] = [];
+    tasks.forEach(t => {
+      if (!map[t.dayLabel]) { map[t.dayLabel] = []; order.push(t.dayLabel); }
+      map[t.dayLabel].push(t);
+    });
+    return order.map(label => ({ label, tasks: map[label] }));
+  }
+
+  return (
+    <Box bg="white" borderRadius="20px" border="1.5px solid #d1fae5" p={5} mb={6}
+      boxShadow="0 2px 12px rgba(0,0,0,0.05)">
+      <HStack mb={4} gap={2}>
+        <Text fontSize="lg">📅</Text>
+        <Text fontWeight="800" color="#14532d">Upcoming Care Schedule</Text>
+        <Badge bg="#dcfce7" color="#16a34a" borderRadius="full" fontSize="10px" px={2} fontWeight="700">
+          Next {DAYS_AHEAD} days
+        </Badge>
+      </HStack>
+
+      <VStack gap={3} align="stretch">
+        {withTasks.map(({ crop, tasks }) => {
+          const isOpen = expanded === crop.id;
+          const groups = groupByDay(tasks);
+          const nextTask = tasks[0];
+
+          return (
+            <Box key={crop.id} borderRadius="14px" border="1.5px solid #e5e7eb" overflow="hidden">
+              {/* Crop header row — always visible */}
+              <HStack
+                px={4} py={3} bg={isOpen ? '#f0fdf4' : 'white'}
+                cursor="pointer" gap={3}
+                onClick={() => setExpanded(isOpen ? null : crop.id)}
+                _hover={{ bg: '#f0fdf4' }}
+                transition="background 0.15s"
+              >
+                <Text fontSize="22px">{crop.emoji}</Text>
+                <Box flex={1}>
+                  <Text fontWeight="800" color="#14532d" fontSize="13px">{crop.name}</Text>
+                  {!isOpen && nextTask && (
+                    <Text fontSize="11px" color="#6b7280">
+                      Next: <Text as="span" color="#16a34a" fontWeight="700">{nextTask.dayLabel}</Text>
+                      {' '}at {nextTask.time} — {nextTask.message.length > 45
+                        ? nextTask.message.slice(0, 45) + '…'
+                        : nextTask.message}
+                    </Text>
+                  )}
+                </Box>
+                <HStack gap={2}>
+                  <Badge bg="#f0fdf4" color="#16a34a" borderRadius="full" fontSize="9px" px={2} fontWeight="700">
+                    {tasks.length} task{tasks.length !== 1 ? 's' : ''}
+                  </Badge>
+                  <Text fontSize="12px" color="#9ca3af" fontWeight="700">
+                    {isOpen ? '▲' : '▼'}
+                  </Text>
+                </HStack>
+              </HStack>
+
+              {/* Expanded task list grouped by day */}
+              {isOpen && (
+                <Box px={4} pb={4} pt={2} bg="#fafafa">
+                  <VStack gap={4} align="stretch">
+                    {groups.map(group => (
+                      <Box key={group.label}>
+                        {/* Day header */}
+                        <HStack gap={2} mb={2}>
+                          <Box h="1px" flex={1} bg="#e5e7eb" />
+                          <Text fontSize="10px" fontWeight="800" color="#6b7280"
+                            textTransform="uppercase" letterSpacing="0.5px">
+                            {group.label}
+                          </Text>
+                          <Box h="1px" flex={1} bg="#e5e7eb" />
+                        </HStack>
+
+                        <VStack gap={2} align="stretch">
+                          {group.tasks.map((task, i) => (
+                            <HStack key={i} gap={3} py={2} px={3}
+                              bg="white" borderRadius="10px"
+                              border="1px solid #e5e7eb">
+                              {/* Time pill */}
+                              <Box bg="#dcfce7" borderRadius="8px" px={2} py={1}
+                                flexShrink={0} minW="52px" textAlign="center">
+                                <Text fontSize="11px" color="#16a34a" fontWeight="800">
+                                  {task.time}
+                                </Text>
+                              </Box>
+                              <Text fontSize="12px" color="#374151" fontWeight="600" flex={1}
+                                lineHeight="1.4">
+                                {task.message}
+                              </Text>
+                            </HStack>
+                          ))}
+                        </VStack>
+                      </Box>
+                    ))}
+                  </VStack>
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+      </VStack>
+    </Box>
+  );
+};
+
 const TodayReminders = ({
   crops,
   userId,
@@ -1313,6 +1506,7 @@ const TodayReminders = ({
 }) => {
   const currentHour   = serverTime.getHours();
   const currentMinute = serverTime.getMinutes();
+  const serverToday = serverTime.toISOString().slice(0, 10);
 
   // Skip crops queued in the last 60 seconds so adding a crop doesn't
   // immediately fire tasks for it (they'll appear on the next render cycle).
@@ -1321,13 +1515,28 @@ const TodayReminders = ({
     .filter(c => c.status !== 'wilted' && new Date(c.queued_at).getTime() < now60sAgo)
     .flatMap(crop => {
       const templates = CROP_NOTIFICATIONS[crop.name] ?? DEFAULT_NOTIFICATIONS;
-      return templates.map(t => {
-        const [hStr, mStr] = t.time.split(':');
-        return {
-          crop: crop.name, emoji: crop.emoji, time: t.time, message: t.message,
-          hour: parseInt(hStr), minute: parseInt(mStr ?? '0'),
-        };
-      });
+      // BUG FIX: if the crop was queued today, skip any reminder whose time
+      // had already passed at queue time — those would instantly auto-fail.
+      const queuedAt = new Date(crop.queued_at);
+      const queuedToday = queuedAt.toISOString().slice(0, 10) === serverToday;
+      const queuedHour = queuedAt.getHours();
+      const queuedMinute = queuedAt.getMinutes();
+      return templates
+        .filter(t => {
+          if (!queuedToday) return true; // older crops: show all reminders
+          const [hStr, mStr] = t.time.split(':');
+          const rHour = parseInt(hStr);
+          const rMin = parseInt(mStr ?? '0');
+          // Only include reminders whose time is at or after queue time
+          return rHour > queuedHour || (rHour === queuedHour && rMin >= queuedMinute);
+        })
+        .map(t => {
+          const [hStr, mStr] = t.time.split(':');
+          return {
+            crop: crop.name, emoji: crop.emoji, time: t.time, message: t.message,
+            hour: parseInt(hStr), minute: parseInt(mStr ?? '0'),
+          };
+        });
     });
 
   const dueNow = allReminders.filter(
@@ -1677,13 +1886,17 @@ const DailyQuestPanel = ({ userId, dailyStats, questProgress }: {
 };
 
 // ─── Farmer Profile Card ──────────────────────────────────────────────────────
-const FarmerProfileCard = ({ userId, username, totalTokens, seed }: {
-  userId: string; username: string; totalTokens: number; seed?: number;
+const FarmerProfileCard = ({ userId, username, totalTokens, xpOverride, seed }: {
+  userId: string; username: string; totalTokens: number; xpOverride?: number; seed?: number;
 }) => {
   const [xp, setXp] = useState(0);
-  useEffect(() => { setXp(getFarmerXP(userId)); }, [userId]);
-  const level = getFarmerLevel(xp);
-  const { current, needed, pct } = getXpToNextLevel(xp);
+  // BUG FIX: also re-read XP whenever seed bumps (seed increments on every
+  // awardXP call, so the card level stays in sync with notifications).
+  useEffect(() => { setXp(getFarmerXP(userId)); }, [userId, seed]);
+  // Prefer live xpOverride from parent state when available (avoids localStorage lag)
+  const displayXp = xpOverride ?? xp;
+  const level = getFarmerLevel(displayXp);
+  const { current, needed, pct } = getXpToNextLevel(displayXp);
   // BUG FIX: re-read achievements when seed bumps (after async DB hydration)
   const unlocked = getUnlockedAchievements(userId);
 
@@ -1720,7 +1933,7 @@ const FarmerProfileCard = ({ userId, username, totalTokens, seed }: {
             </Badge>
           </HStack>
           <Text fontSize="11px" color="rgba(255,255,255,0.55)" mb={2}>
-            {xp.toLocaleString()} XP · {unlocked.size}/{ACHIEVEMENTS.length} achievements · {totalTokens} tokens
+            {displayXp.toLocaleString()} XP · {unlocked.size}/{ACHIEVEMENTS.length} achievements · {totalTokens} tokens
           </Text>
           <Box>
             <HStack justify="space-between" mb={1}>
@@ -2099,10 +2312,17 @@ const GamifiedDashboard = () => {
   // ── Gamification state ────────────────────────────────────────────────────
   const [farmerXP, setFarmerXP_state] = useState(0);
   const [levelUpData, setLevelUpData] = useState<typeof FARMER_LEVELS[0] | null>(null);
-  const [pendingAchievement, setPendingAchievement] = useState<Achievement | null>(null);
+  const [achievementQueue, setAchievementQueue] = useState<Achievement[]>([]);
+  const pendingAchievement = achievementQueue[0] ?? null;
+  const setPendingAchievement = (a: Achievement | null) => {
+    if (a === null) return; // use dismissAchievement to clear
+    setAchievementQueue(q => q.some(x => x.id === a.id) ? q : [...q, a]);
+  };
+  const dismissAchievement = () => setAchievementQueue(q => q.slice(1));
   // BUG FIX: used to force AchievementGallery to re-read localStorage after
   // async DB hydration completes (see achievementSeed in useEffect below).
   const [achievementSeed, setAchievementSeed] = useState(0);
+  const [journalSeed, setJournalSeed] = useState(0);
   const [xpPopup, setXpPopup] = useState<{ amount: number; label: string } | null>(null);
   const [confetti, setConfetti] = useState(false);
   // Daily quest stats (tracked in memory, refreshed on actions)
@@ -2404,6 +2624,7 @@ const GamifiedDashboard = () => {
     });
 
     await fetchCrops();
+    setJournalSeed(s => s + 1); // BUG FIX: force JournalTimeline to re-fetch after new photo
 
     // Token grant — now goes through RevenueProvider properly
     if (tokenEarned) {
@@ -2487,6 +2708,7 @@ const GamifiedDashboard = () => {
     });
 
     await fetchCrops();
+    setJournalSeed(s => s + 1); // BUG FIX: refresh journal after harvest photo
     setBadgeCrop(crops.find(c => c.id === cropId) ?? null);
     showToast(`🌾 ${crop.name} harvested! Badge unlocked!`);
     setConfetti(true);
@@ -2531,6 +2753,15 @@ const GamifiedDashboard = () => {
         const exists = prev.some(t => t.label === label && t.due === payload.due);
         return exists ? prev : [data as Task, ...prev];
       });
+      // BUG FIX: notify the user so the bell icon lights up and it appears in
+      // the Notifications page. Previously tasks were created with no notification.
+      await supabase.from('notifications').insert({
+        user_id: user.id,
+        type: 'task',
+        title: `📋 New Task: ${reminder.crop}`,
+        message: `${label} — due today at ${reminder.time}`,
+        is_read: false,
+      });
     }
   }, [user]);
 
@@ -2543,7 +2774,18 @@ const GamifiedDashboard = () => {
       priority: newTaskPriority, created_at: serverNow().toISOString(),
     };
     const { data, error } = await supabase.from('farm_tasks').insert(payload).select().single();
-    if (!error && data) { setTasks(prev => [data as Task, ...prev]); setNewTask(''); }
+    if (!error && data) {
+      setTasks(prev => [data as Task, ...prev]);
+      setNewTask('');
+      // BUG FIX: notify the user so the bell icon lights up.
+      await supabase.from('notifications').insert({
+        user_id: user.id,
+        type: 'task',
+        title: `📋 New Task Added`,
+        message: `${newTask.trim()} — ${newTaskCrop || 'General'}`,
+        is_read: false,
+      });
+    }
   };
 
   const handleToggleTask = async (id: string) => {
@@ -2629,7 +2871,7 @@ const GamifiedDashboard = () => {
       {/* Gamification overlays */}
       <ConfettiBurst trigger={confetti} onDone={() => setConfetti(false)} />
       {levelUpData && <LevelUpModal level={levelUpData} onClose={() => setLevelUpData(null)} />}
-      {pendingAchievement && <AchievementToast achievement={pendingAchievement} onDone={() => setPendingAchievement(null)} />}
+      {pendingAchievement && <AchievementToast achievement={pendingAchievement} onDone={dismissAchievement} />}
       {xpPopup && <XPPopup amount={xpPopup.amount} label={xpPopup.label} onDone={() => setXpPopup(null)} />}
 
       {/* Toast */}
@@ -2731,7 +2973,7 @@ const GamifiedDashboard = () => {
         </HStack>
 
         {/* ── Farmer Profile ── */}
-        <FarmerProfileCard userId={user?.id ?? ''} username={username} totalTokens={totalTokens} seed={achievementSeed} />
+        <FarmerProfileCard userId={user?.id ?? ''} username={username} totalTokens={totalTokens} xpOverride={farmerXP} seed={achievementSeed} />
 
         {/* ── Daily Quests ── */}
         {user && <DailyQuestPanel userId={user.id} dailyStats={dailyStatsForQuests} questProgress={questProgress} />}
@@ -2757,6 +2999,11 @@ const GamifiedDashboard = () => {
             crops={crops} userId={user?.id ?? ''} serverTime={now}
             onTransferToTask={handleTransferReminderToTask}
           />
+        )}
+
+        {/* ── Upcoming Care Schedule ── */}
+        {crops.length > 0 && (
+          <UpcomingCropTasks crops={crops} serverTime={now} />
         )}
 
         {/* ── Tabs ── */}
@@ -2972,7 +3219,7 @@ const GamifiedDashboard = () => {
                 <Heading size="md" color="#14532d" fontWeight="900">📓 Growth Journal</Heading>
                 <Text fontSize="sm" color="gray.400">Every verified photo, in order</Text>
               </HStack>
-              <JournalTimeline userId={user?.id ?? ''} />
+              <JournalTimeline userId={user?.id ?? ''} seed={journalSeed} />
             </Box>
           </Tabs.Content>
 

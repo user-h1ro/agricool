@@ -198,7 +198,9 @@ function stateToDbRow(uid: string, state: GardenState) {
 
 // ── Dispatch coin event so TopBar reacts instantly ────────────────────────────
 function dispatchCoinEvent(amount: number, newTotal: number, sourcePos?: { x: number; y: number }) {
-  if (amount === 0) return;
+  // BUG FIX: do NOT skip amount===0 — this is how the initial coin balance is
+  // synced to the TopBar on Garden mount. Dropping it caused TopBar to always
+  // show 0 (or a stale localStorage value) instead of the real DB total.
   window.dispatchEvent(new CustomEvent('agricool:coins', {
     detail: { amount, newTotal, sourceX: sourcePos?.x, sourceY: sourcePos?.y },
   }));
@@ -214,7 +216,32 @@ const StatBadge = ({ emoji, label, value, color }: { emoji: string; label: strin
   </Box>
 );
 
-// ─── Garden Grid ──────────────────────────────────────────────────────────────
+// ─── 3D Isometric Garden Grid ─────────────────────────────────────────────────
+
+const ISO_TILE_W = 88;
+const ISO_TILE_H = 44;
+const COLS = 5;
+const ROWS = 5;
+
+function isoProject(col: number, row: number) {
+  const x = (col - row) * (ISO_TILE_W / 2);
+  const y = (col + row) * (ISO_TILE_H / 2);
+  return { x, y };
+}
+
+// Stable animation offsets per plot (never random — avoids hydration flicker)
+const FLOAT_OFFSETS = Array.from({ length: 25 }, (_, i) => (i * 1.37) % 3);
+const SWAY_OFFSETS  = Array.from({ length: 25 }, (_, i) => (i * 0.83) % 2.5);
+const SHAKE_DELAYS  = Array.from({ length: 25 }, (_, i) => (i * 0.19) % 0.4);
+// Decorative ambient critters/clouds that drift across the scene
+const AMBIENT_ITEMS = [
+  { emoji: '☁️',  startX: -40, startY:  30, dur: 18, size: 20, opacity: 0.5 },
+  { emoji: '🦋',  startX: -20, startY:  80, dur: 12, size: 16, opacity: 0.8 },
+  { emoji: '☁️',  startX: -60, startY:  55, dur: 22, size: 14, opacity: 0.35 },
+  { emoji: '🐝',  startX: -10, startY:  65, dur:  9, size: 14, opacity: 0.9 },
+];
+
+// ─── GardenGrid (3D Isometric) ────────────────────────────────────────────────
 
 const GardenGrid = ({
   layout,
@@ -227,272 +254,476 @@ const GardenGrid = ({
   layout: GardenLayout;
   activePests: PestEvent[];
   trackedCrops: TrackedCrop[];
-  onPlaceCrop: (plotIdx: number, crop: TrackedCrop) => void;
-  onDefendPlot: (plotIdx: number, item: 'scarecrow' | 'pesticide') => void;
-  onRemoveCrop: (plotIdx: number) => void;
+  onPlaceCrop: (idx: number, crop: TrackedCrop) => void;
+  onDefendPlot: (idx: number, item: 'scarecrow' | 'pesticide') => void;
+  onRemoveCrop: (idx: number) => void;
 }) => {
-  const [selectedCrop, setSelectedCrop] = useState<TrackedCrop | null>(null);
   const [selectedPlot, setSelectedPlot] = useState<number | null>(null);
+  const [hoveredPlot,  setHoveredPlot]  = useState<number | null>(null);
+  const [pestWarning,  setPestWarning]  = useState(activePests.length > 0);
+  const [tick, setTick] = useState(0);
 
-  const pestAt = (idx: number) => activePests.find(p => p.plotIdx === idx);
+  // Dismiss pest warning after 3s, re-trigger if new pests appear
+  useEffect(() => {
+    if (activePests.length > 0) { setPestWarning(true); }
+    const t = setTimeout(() => setPestWarning(false), 3000);
+    return () => clearTimeout(t);
+  }, [activePests.length]);
 
-  const handleCellClick = (idx: number) => {
-    const plot = layout[idx];
-    if (plot.cropId) {
-      setSelectedPlot(idx);
-    } else if (selectedCrop) {
-      onPlaceCrop(idx, selectedCrop);
-      setSelectedCrop(null);
-    }
-  };
+  // Drive CSS animations via a 60fps tick
+  useEffect(() => {
+    let id: ReturnType<typeof requestAnimationFrame>;
+    const loop = () => { setTick(t => t + 1); id = requestAnimationFrame(loop); };
+    id = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const pestPlots = new Set(activePests.map(p => p.plotIdx));
+  const selected  = selectedPlot !== null ? layout[selectedPlot] : null;
+  const selectedPest = selectedPlot !== null ? activePests.find(p => p.plotIdx === selectedPlot) : null;
+
+  // SVG canvas: enough room for 5×5 isometric + headroom for tall plants
+  const CANVAS_W = 560;
+  const CANVAS_H = 380;
+  const OFFSET_X = CANVAS_W / 2;          // horizontal centre
+  const OFFSET_Y = 60;                     // top padding
+
+  // Sort plots back-to-front (painter's algorithm) so front tiles overlap rear
+  const renderOrder = Array.from({ length: 25 }, (_, i) => {
+    const col = i % COLS;
+    const row = Math.floor(i / COLS);
+    return { idx: i, col, row, depth: col + row };
+  }).sort((a, b) => a.depth - b.depth);
+
+  const t = tick / 60; // seconds elapsed
 
   return (
     <Box>
-      {/* Crop picker */}
-      {trackedCrops.length > 0 && (
-        <Box mb={4}>
-          <Text fontSize="sm" fontWeight="700" color="gray.600" mb={2}>
-            Pick a crop to place in the garden:
-          </Text>
-          <Flex gap={2} flexWrap="wrap">
-            {trackedCrops.map(c => (
-              <Button
-                key={c.id}
-                size="sm"
-                borderRadius="full"
-                fontWeight="700"
-                bg={selectedCrop?.id === c.id ? '#059669' : 'white'}
-                color={selectedCrop?.id === c.id ? 'white' : 'gray.700'}
-                border="1.5px solid"
-                borderColor={selectedCrop?.id === c.id ? '#059669' : '#d1d5db'}
-                _hover={{ bg: selectedCrop?.id === c.id ? '#047857' : '#f9fafb' }}
-                onClick={() => setSelectedCrop(prev => prev?.id === c.id ? null : c)}
-              >
-                {c.emoji} {c.name}
-              </Button>
-            ))}
-            {selectedCrop && (
-              <Button
-                size="sm" borderRadius="full" fontWeight="700" variant="ghost"
-                color="gray.400" onClick={() => setSelectedCrop(null)}
-              >
-                ✕ Cancel
-              </Button>
-            )}
-          </Flex>
-        </Box>
-      )}
+      {/* ── Keyframe injection ─────────────────────────────────────── */}
+      <style>{`
+        @keyframes iso-float   { 0%,100%{transform:translateY(0)}   50%{transform:translateY(-5px)} }
+        @keyframes iso-sway    { 0%,100%{transform:rotate(-3deg)}   50%{transform:rotate(3deg)}  }
+        @keyframes iso-shake   { 0%,100%{transform:translate(0,0)}  25%{transform:translate(-3px,-2px)} 75%{transform:translate(3px,2px)} }
+        @keyframes iso-pulse   { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(.92)} }
+        @keyframes iso-glow    { 0%,100%{filter:drop-shadow(0 0 4px #facc15)} 50%{filter:drop-shadow(0 0 12px #facc15)} }
+        @keyframes iso-harvest { 0%{transform:scale(1) rotate(0deg)} 50%{transform:scale(1.25) rotate(8deg)} 100%{transform:scale(1) rotate(0deg)} }
+        @keyframes iso-wilt    { 0%{transform:rotate(0deg) translateY(0)} 100%{transform:rotate(-20deg) translateY(4px)} }
+        @keyframes iso-ambient { 0%{transform:translateX(0)} 100%{transform:translateX(700px)} }
+        @keyframes iso-pest-in { 0%{opacity:0;transform:scale(.4) rotate(-20deg)} 60%{transform:scale(1.2) rotate(4deg)} 100%{opacity:1;transform:scale(1) rotate(0deg)} }
+        @keyframes iso-pest-bob{ 0%,100%{transform:translateY(0) rotate(-5deg)} 50%{transform:translateY(-6px) rotate(5deg)} }
+        @keyframes iso-warning { 0%,100%{opacity:1;transform:scale(1) translateX(-50%)} 50%{opacity:.85;transform:scale(1.02) translateX(-50%)} }
+        @keyframes iso-sparkle { 0%{opacity:0;transform:scale(0) translateY(0)} 40%{opacity:1;transform:scale(1.3) translateY(-12px)} 100%{opacity:0;transform:scale(.8) translateY(-22px)} }
+        @keyframes iso-defend  { 0%,100%{transform:scale(1)} 50%{transform:scale(1.15)} }
+        @keyframes iso-grow    { 0%{transform:scaleY(.3) translateY(8px)} 100%{transform:scaleY(1) translateY(0)} }
+      `}</style>
 
-      {trackedCrops.length === 0 && (
-        <Box bg="#f0fdf4" border="1.5px dashed #d1fae5" borderRadius="12px" p={4} mb={4} textAlign="center">
-          <Text fontSize="sm" color="#16a34a" fontWeight="700">
-            🌱 Queue crops in the Tracker — they'll automatically appear here as garden plots!
-          </Text>
-        </Box>
-      )}
-
-      {/* 5×5 grid */}
-      <Box
-        display="grid"
-        style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}
-        gap={2}
-        p={3}
-        bg="linear-gradient(135deg, #d1fae5, #a7f3d0)"
-        borderRadius="18px"
-        border="2px solid #6ee7b7"
-      >
-        {layout.map((plot, idx) => {
-          const pest      = pestAt(idx);
-          const isActive  = selectedPlot === idx;
-          const hpVal     = plot.hp;
-
-          return (
-            <Box
-              key={idx}
-              onClick={() => handleCellClick(idx)}
-              position="relative"
-              h="64px"
-              borderRadius="10px"
-              bg={
-                pest ? '#fff1f2' :
-                plot.cropId ? '#f0fdf4' :
-                selectedCrop ? '#fefce8' :
-                '#ecfdf5'
-              }
-              border="2px"
-              borderStyle={plot.cropId ? 'solid' : selectedCrop ? 'dashed' : 'dashed'}
-              borderColor={
-                pest ? '#fca5a5' :
-                isActive ? '#059669' :
-                plot.cropId ? '#86efac' :
-                selectedCrop ? '#fde68a' :
-                '#d1fae5'
-              }
-              cursor={plot.cropId ? 'pointer' : selectedCrop ? 'pointer' : 'default'}
-              display="flex"
-              alignItems="center"
-              justifyContent="center"
-              flexDirection="column"
-              gap="2px"
-              transition="all 0.15s"
-              _hover={plot.cropId || selectedCrop ? { transform: 'scale(1.04)' } : {}}
-              title={plot.cropId ? `${plot.name} · ${plot.status} · ${hpVal}/3 HP` : selectedCrop ? 'Click to place' : 'Empty'}
-            >
-              {pest && (
-                <Box position="absolute" top="2px" right="2px" fontSize="12px" title={`${pest.pestName} attacking!`}>
-                  {pest.emoji}
-                </Box>
-              )}
-              {plot.defenseItem && !pest && (
-                <Box position="absolute" top="2px" right="2px" fontSize="11px" opacity={0.7}
-                  title={`${plot.defenseItem} active · ${plot.defenseExpiresAt ? daysLeft(plot.defenseExpiresAt) + 'd left' : ''}`}>
-                  {plot.defenseItem === 'scarecrow' ? '🧱' : '🪲'}
-                </Box>
-              )}
-              {plot.cropId ? (
-                <>
-                  <Text fontSize="22px" lineHeight="1">{plot.emoji}</Text>
-                  {/* Mini HP bar */}
-                  <Box w="80%" h="3px" bg="#e5e7eb" borderRadius="99px" overflow="hidden">
-                    <Box
-                      h="full"
-                      w={`${(hpVal / 3) * 100}%`}
-                      bg={hpColor(hpVal)}
-                      borderRadius="99px"
-                      transition="width 0.3s"
-                    />
-                  </Box>
-                </>
-              ) : selectedCrop ? (
-                <Text fontSize="20px" opacity={0.4}>+</Text>
-              ) : null}
+      {/* ── Pest invasion warning banner ───────────────────────────── */}
+      {pestWarning && (
+        <Box
+          position="relative" mb={4}
+          bg="linear-gradient(135deg,#7f1d1d,#b91c1c)"
+          borderRadius="16px" p={4}
+          boxShadow="0 8px 32px rgba(185,28,28,0.45), inset 0 1px 0 rgba(255,255,255,0.15)"
+          style={{ animation: 'iso-warning 1.4s ease-in-out infinite', transformOrigin: 'center' }}
+        >
+          <HStack gap={3} justify="center" flexWrap="wrap">
+            <Text fontSize="24px" style={{ animation: 'iso-pest-bob 0.8s ease-in-out infinite' }}>🐛</Text>
+            <Box>
+              <Text color="white" fontWeight="900" fontSize="md" letterSpacing="0.5px">
+                ⚠️ PEST ATTACK! {activePests.length} plot{activePests.length > 1 ? 's' : ''} under siege
+              </Text>
+              <Text color="rgba(255,255,255,0.7)" fontSize="xs" fontWeight="600">
+                Tap infected plots to deploy a defense item
+              </Text>
             </Box>
-          );
-        })}
+            <Text fontSize="24px" style={{ animation: 'iso-pest-bob 0.8s ease-in-out infinite', animationDelay: '0.4s' }}>🦗</Text>
+          </HStack>
+          {/* Animated bug particles */}
+          {['🪲','🦟','🐞'].map((bug, bi) => (
+            <Text key={bi} position="absolute" fontSize="14px"
+              style={{
+                top: `${8 + bi * 10}px`,
+                left: `${10 + bi * 30}%`,
+                animation: `iso-sparkle ${1 + bi * 0.3}s ease-out infinite`,
+                animationDelay: `${bi * 0.4}s`,
+                pointerEvents: 'none',
+              }}
+            >{bug}</Text>
+          ))}
+        </Box>
+      )}
+
+      {/* ── Isometric SVG garden ───────────────────────────────────── */}
+      <Box
+        position="relative"
+        borderRadius="24px"
+        overflow="hidden"
+        bg="linear-gradient(160deg,#d1fae5 0%,#bbf7d0 40%,#a7f3d0 100%)"
+        boxShadow="0 12px 48px rgba(20,83,45,0.18), inset 0 1px 0 rgba(255,255,255,0.6)"
+        border="2px solid rgba(134,239,172,0.6)"
+        mb={4}
+      >
+        {/* Sky gradient strip */}
+        <Box
+          position="absolute" top={0} left={0} right={0} h="70px"
+          bg="linear-gradient(180deg,#bfdbfe 0%,transparent 100%)"
+          pointerEvents="none"
+        />
+
+        <svg
+          viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
+          width="100%"
+          style={{ display: 'block', maxHeight: '420px' }}
+        >
+          {/* ── Ambient drifting items ────────────────────────── */}
+          {AMBIENT_ITEMS.map((item, ai) => {
+            const progress = ((t / item.dur + ai * 0.25) % 1);
+            const ax = item.startX + progress * (CANVAS_W + 100);
+            const ay = item.startY + Math.sin(t * 0.5 + ai) * 6;
+            return (
+              <text
+                key={ai} x={ax} y={ay}
+                fontSize={item.size} opacity={item.opacity}
+                style={{ userSelect: 'none', pointerEvents: 'none' }}
+              >{item.emoji}</text>
+            );
+          })}
+
+          {/* ── Ground shadow plane ───────────────────────────── */}
+          <ellipse
+            cx={OFFSET_X} cy={OFFSET_Y + (COLS + ROWS) * (ISO_TILE_H / 2) + 10}
+            rx={COLS * ISO_TILE_W * 0.52} ry={18}
+            fill="rgba(20,83,45,0.12)"
+          />
+
+          {/* ── Tiles (back to front) ─────────────────────────── */}
+          {renderOrder.map(({ idx, col, row }) => {
+            const plot    = layout[idx];
+            const hasPest = pestPlots.has(idx);
+            const isHov   = hoveredPlot === idx;
+            const isSel   = selectedPlot === idx;
+            const isEmpty = !plot.cropId;
+
+            const { x: cx, y: cy } = isoProject(col, row);
+            // SVG top-left of this tile (diamond centre)
+            const tx = OFFSET_X + cx;
+            const ty = OFFSET_Y + cy;
+
+            // Isometric diamond points (flat top)
+            const half_w = ISO_TILE_W / 2;
+            const half_h = ISO_TILE_H / 2;
+            const diamond = `
+              ${tx},${ty - half_h}
+              ${tx + half_w},${ty}
+              ${tx},${ty + half_h}
+              ${tx - half_w},${ty}
+            `;
+
+            // Left face (dark)
+            const leftFace = `
+              ${tx - half_w},${ty}
+              ${tx},${ty + half_h}
+              ${tx},${ty + half_h + 14}
+              ${tx - half_w},${ty + 14}
+            `;
+            // Right face (mid)
+            const rightFace = `
+              ${tx + half_w},${ty}
+              ${tx},${ty + half_h}
+              ${tx},${ty + half_h + 14}
+              ${tx + half_w},${ty + 14}
+            `;
+
+            // Tile colour logic
+            let topColor  = isEmpty ? '#86efac' : (plot.status === 'wilted' ? '#92400e' : '#4ade80');
+            let leftColor = isEmpty ? '#166534' : (plot.status === 'wilted' ? '#78350f' : '#15803d');
+            let rightColor= isEmpty ? '#15803d' : (plot.status === 'wilted' ? '#92400e' : '#16a34a');
+
+            if (hasPest) {
+              topColor   = '#fca5a5';
+              leftColor  = '#b91c1c';
+              rightColor = '#dc2626';
+            }
+            if (isSel) {
+              topColor   = '#fde68a';
+              leftColor  = '#b45309';
+              rightColor = '#d97706';
+            } else if (isHov) {
+              topColor   = '#bbf7d0';
+              leftColor  = '#14532d';
+              rightColor = '#166534';
+            }
+
+            // Plant float/sway/shake offset
+            const floatY  = Math.sin(t * 1.2 + FLOAT_OFFSETS[idx]) * 3;
+            const swayDeg = Math.sin(t * 0.9 + SWAY_OFFSETS[idx]) * 4;
+            const shakeX  = hasPest ? Math.sin(t * 8 + SHAKE_DELAYS[idx] * 20) * 2.5 : 0;
+            const shakeY  = hasPest ? Math.cos(t * 8 + SHAKE_DELAYS[idx] * 20) * 1.5 : 0;
+
+            // Plant emoji size + vertical position above tile
+            const emojiSize = plot.status === 'harvest_ready' ? 30 :
+                              plot.status === 'growing'       ? 22 :
+                              plot.status === 'wilted'        ? 20 : 26;
+            const plantY = ty - half_h - emojiSize * 0.5 + floatY + shakeY;
+            const plantX = tx + shakeX;
+
+            return (
+              <g
+                key={idx}
+                style={{ cursor: 'pointer' }}
+                onClick={() => setSelectedPlot(selectedPlot === idx ? null : idx)}
+                onMouseEnter={() => setHoveredPlot(idx)}
+                onMouseLeave={() => setHoveredPlot(null)}
+              >
+                {/* Tile box: right face */}
+                <polygon points={rightFace} fill={rightColor} />
+                {/* Tile box: left face */}
+                <polygon points={leftFace}  fill={leftColor}  />
+                {/* Tile top */}
+                <polygon points={diamond}   fill={topColor}
+                  stroke={isSel ? '#f59e0b' : isHov ? '#4ade80' : 'rgba(255,255,255,0.25)'}
+                  strokeWidth={isSel ? 2 : 1}
+                />
+
+                {/* Soil texture dots on empty tile */}
+                {isEmpty && (
+                  <>
+                    <circle cx={tx - 10} cy={ty - 2} r={2} fill="rgba(20,83,45,0.3)" />
+                    <circle cx={tx + 8}  cy={ty + 3} r={1.5} fill="rgba(20,83,45,0.25)" />
+                    <circle cx={tx}      cy={ty - 6} r={1.5} fill="rgba(20,83,45,0.2)" />
+                  </>
+                )}
+
+                {/* HP bar (below tile, front edge) */}
+                {!isEmpty && (
+                  <>
+                    <rect x={tx - 18} y={ty + half_h + 4} width={36} height={4} rx={2} fill="rgba(0,0,0,0.2)" />
+                    <rect x={tx - 18} y={ty + half_h + 4}
+                      width={36 * (plot.hp / 3)} height={4} rx={2}
+                      fill={plot.hp >= 2 ? '#4ade80' : plot.hp === 1 ? '#facc15' : '#f87171'}
+                    />
+                  </>
+                )}
+
+                {/* Harvest-ready glow ring */}
+                {plot.status === 'harvest_ready' && (
+                  <ellipse
+                    cx={tx} cy={ty - half_h + 4}
+                    rx={20} ry={8}
+                    fill="none" stroke="#facc15" strokeWidth={2} opacity={0.8}
+                    style={{
+                      animation: 'iso-glow 1.5s ease-in-out infinite',
+                      animationDelay: `${FLOAT_OFFSETS[idx] * 0.5}s`,
+                    }}
+                  />
+                )}
+
+                {/* Plant / crop */}
+                {!isEmpty && (
+                  <text
+                    x={plantX} y={plantY}
+                    textAnchor="middle"
+                    dominantBaseline="auto"
+                    fontSize={emojiSize}
+                    style={{
+                      transformOrigin: `${plantX}px ${plantY + emojiSize}px`,
+                      transform: `rotate(${swayDeg}deg)`,
+                      filter: plot.status === 'harvest_ready'
+                        ? 'drop-shadow(0 0 6px rgba(250,204,21,0.8))'
+                        : plot.status === 'wilted'
+                        ? 'grayscale(60%) brightness(0.7)'
+                        : 'drop-shadow(0 3px 4px rgba(0,0,0,0.25))',
+                      userSelect: 'none',
+                    }}
+                  >{plot.emoji}</text>
+                )}
+
+                {/* Plus sign on empty tile */}
+                {isEmpty && (
+                  <text
+                    x={tx} y={ty + 5}
+                    textAnchor="middle" dominantBaseline="middle"
+                    fontSize={isHov ? 20 : 16}
+                    fill={isHov ? '#166534' : 'rgba(22,101,52,0.4)'}
+                    fontWeight="700"
+                    style={{ transition: 'font-size 0.15s', userSelect: 'none' }}
+                  >+</text>
+                )}
+
+                {/* Defense item badge */}
+                {plot.defenseItem && (
+                  <text
+                    x={tx + 22} y={ty - 12}
+                    fontSize={14} textAnchor="middle"
+                    style={{
+                      animation: 'iso-defend 2s ease-in-out infinite',
+                      filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.3))',
+                      userSelect: 'none',
+                    }}
+                  >{plot.defenseItem === 'scarecrow' ? '🪆' : '💊'}</text>
+                )}
+
+                {/* Pest bug (animated) */}
+                {hasPest && (() => {
+                  const pest = activePests.find(p => p.plotIdx === idx)!;
+                  const bobY = Math.sin(t * 3 + idx) * 5;
+                  const bobR = Math.sin(t * 2 + idx) * 12;
+                  return (
+                    <text
+                      x={tx - 20} y={ty - half_h - 8 + bobY}
+                      fontSize={20} textAnchor="middle"
+                      style={{
+                        transform: `rotate(${bobR}deg)`,
+                        transformOrigin: `${tx - 20}px ${ty - half_h}px`,
+                        filter: 'drop-shadow(0 0 6px rgba(239,68,68,0.7))',
+                        userSelect: 'none',
+                        animation: 'iso-pest-in 0.5s ease-out',
+                      }}
+                    >{pest.emoji}</text>
+                  );
+                })()}
+
+                {/* Harvest sparkles */}
+                {plot.status === 'harvest_ready' && [0, 1, 2].map(si => (
+                  <text
+                    key={si} textAnchor="middle" fontSize={10}
+                    x={tx + (si - 1) * 18}
+                    y={ty - half_h - 30}
+                    style={{
+                      animation: `iso-sparkle ${1.2 + si * 0.3}s ease-out infinite`,
+                      animationDelay: `${si * 0.4}s`,
+                      userSelect: 'none',
+                    }}
+                  >✨</text>
+                ))}
+
+                {/* Plot index label (top face, faint) */}
+                <text
+                  x={tx} y={ty + 2}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fontSize={9} fill="rgba(20,83,45,0.35)" fontWeight="700"
+                  style={{ userSelect: 'none', pointerEvents: 'none' }}
+                >{idx + 1}</text>
+              </g>
+            );
+          })}
+        </svg>
+
+        {/* Ambient overlay label */}
+        <Box position="absolute" bottom={3} right={4} opacity={0.45} pointerEvents="none">
+          <Text fontSize="10px" fontWeight="700" color="#166534" textTransform="uppercase" letterSpacing="1px">
+            5×5 Isometric Garden
+          </Text>
+        </Box>
       </Box>
 
-      {/* Selected plot detail panel */}
-      {selectedPlot !== null && layout[selectedPlot]?.cropId && (
-        <Box mt={4} bg="white" borderRadius="14px" border="1.5px solid #d1fae5" p={4}>
+      {/* ── Plot action panel ──────────────────────────────────────── */}
+      {selectedPlot !== null && (
+        <Box
+          bg="white" borderRadius="20px" p={5} mb={4}
+          border="1.5px solid #d1fae5"
+          boxShadow="0 8px 32px rgba(20,83,45,0.12)"
+          style={{ animation: 'iso-pest-in 0.25s ease-out' }}
+        >
           <HStack justify="space-between" mb={3}>
-            <HStack gap={3}>
-              <Text fontSize="2xl">{layout[selectedPlot].emoji}</Text>
-              <Box>
-                <Text fontWeight="800" color="#14532d">{layout[selectedPlot].name}</Text>
-                <Badge
-                  bg={cropStatusColor(layout[selectedPlot].status) + '22'}
-                  color={cropStatusColor(layout[selectedPlot].status)}
-                  borderRadius="full" px={2} py="1px" fontSize="10px" fontWeight="700"
-                >
-                  {layout[selectedPlot].status.replace('_', ' ')}
-                </Badge>
-              </Box>
-            </HStack>
-            <Button
-              size="xs" variant="ghost" color="gray.400" fontWeight="700"
-              onClick={() => setSelectedPlot(null)}
-            >
-              ✕
-            </Button>
+            <Text fontWeight="900" fontSize="md" color="#14532d">
+              Plot #{selectedPlot + 1}
+              {selected?.cropId ? ` · ${selected.emoji} ${selected.name}` : ' · Empty'}
+            </Text>
+            <Button size="xs" variant="ghost" color="gray.400" onClick={() => setSelectedPlot(null)}>✕</Button>
           </HStack>
 
-          {/* HP */}
-          <Box mb={3}>
-            <Flex justify="space-between" mb={1}>
-              <Text fontSize="11px" fontWeight="700" color="gray.500">Crop Health</Text>
-              <Text fontSize="11px" fontWeight="800" color={hpColor(layout[selectedPlot].hp)}>
-                {layout[selectedPlot].hp}/3 HP
+          {selectedPest && (
+            <Box bg="#fef2f2" borderRadius="12px" p={3} mb={3} border="1px solid #fecaca">
+              <Text fontSize="sm" fontWeight="700" color="#b91c1c">
+                {selectedPest.emoji} {selectedPest.pestName} is attacking this plot!
               </Text>
-            </Flex>
-            <Box h="6px" bg="#e5e7eb" borderRadius="99px" overflow="hidden">
-              <Box
-                h="full"
-                w={`${(layout[selectedPlot].hp / 3) * 100}%`}
-                bg={hpColor(layout[selectedPlot].hp)}
-                borderRadius="99px"
-                transition="width 0.3s"
-              />
+              <Text fontSize="xs" color="#dc2626" mt={1}>Deploy a defense item below to protect your crop.</Text>
             </Box>
-          </Box>
+          )}
 
-          {/* Pest alert */}
-          {pestAt(selectedPlot) && (
-            <Box bg="#fff1f2" border="1.5px solid #fca5a5" borderRadius="10px" p={3} mb={3}>
-              <Text fontSize="12px" fontWeight="700" color="#b91c1c" mb={2}>
-                {pestAt(selectedPlot)!.emoji} {pestAt(selectedPlot)!.pestName} attack! Defend now!
+          {selected?.status === 'harvest_ready' && (
+            <Box bg="#fefce8" borderRadius="12px" p={3} mb={3} border="1px solid #fde68a">
+              <Text fontSize="sm" fontWeight="700" color="#b45309">✨ Ready to harvest! Complete your task to collect.</Text>
+            </Box>
+          )}
+
+          {/* Place crop */}
+          {!selected?.cropId && trackedCrops.length > 0 && (
+            <Box mb={3}>
+              <Text fontSize="xs" fontWeight="700" color="gray.500" textTransform="uppercase" letterSpacing="0.5px" mb={2}>
+                🌱 Plant a crop
               </Text>
               <Flex gap={2} flexWrap="wrap">
-                {DEFENSE_ITEMS.map(item => (
+                {trackedCrops.filter(c => c.status !== 'wilted').map(crop => (
                   <Button
-                    key={item.id}
-                    size="sm"
-                    bg="#f0fdf4"
-                    color="#14532d"
-                    border="1.5px solid #86efac"
-                    borderRadius="8px"
-                    fontWeight="700"
-                    fontSize="12px"
-                    _hover={{ bg: '#dcfce7' }}
-                    onClick={() => { onDefendPlot(selectedPlot, item.id); setSelectedPlot(null); }}
+                    key={crop.id} size="sm" borderRadius="full"
+                    bg="#f0fdf4" color="#14532d" fontWeight="700" fontSize="sm"
+                    border="1.5px solid #bbf7d0"
+                    _hover={{ bg: '#dcfce7', transform: 'scale(1.05)' }}
+                    transition="all 0.15s"
+                    onClick={() => { onPlaceCrop(selectedPlot, crop); setSelectedPlot(null); }}
                   >
-                    {item.icon} {item.name} · 🪙 {item.cost}
+                    {crop.emoji} {crop.name}
                   </Button>
                 ))}
               </Flex>
             </Box>
           )}
 
-          {/* Defense status */}
-          {layout[selectedPlot].defenseItem && !pestAt(selectedPlot) && (
-            <Box bg="#f0fdf4" border="1px solid #d1fae5" borderRadius="10px" p={3} mb={3}>
-              <Text fontSize="12px" fontWeight="700" color="#059669">
-                🛡️ {layout[selectedPlot].defenseItem === 'scarecrow' ? 'Scarecrow' : 'Pesticide'} active
-                {layout[selectedPlot].defenseExpiresAt
-                  ? ` · ${daysLeft(layout[selectedPlot].defenseExpiresAt!)}d left`
-                  : ''}
+          {/* Defense actions */}
+          {selected?.cropId && (
+            <Box mb={3}>
+              <Text fontSize="xs" fontWeight="700" color="gray.500" textTransform="uppercase" letterSpacing="0.5px" mb={2}>
+                🛡️ Defend this plot
               </Text>
-            </Box>
-          )}
-
-          {/* Place defense if no pest and no defense */}
-          {!pestAt(selectedPlot) && !layout[selectedPlot].defenseItem && (
-            <Box>
-              <Text fontSize="11px" fontWeight="700" color="gray.500" mb={2}>Place a defense item:</Text>
               <Flex gap={2} flexWrap="wrap">
-                {DEFENSE_ITEMS.map(item => (
+                {DEFENSE_ITEMS.map(def => (
                   <Button
-                    key={item.id}
-                    size="sm"
-                    bg="white"
-                    color="gray.700"
-                    border="1.5px solid #e5e7eb"
-                    borderRadius="8px"
-                    fontWeight="700"
-                    fontSize="12px"
-                    _hover={{ bg: '#f9fafb' }}
-                    onClick={() => { onDefendPlot(selectedPlot, item.id); setSelectedPlot(null); }}
+                    key={def.id} size="sm" borderRadius="full"
+                    bg="#fef3c7" color="#b45309" fontWeight="700" fontSize="sm"
+                    border="1.5px solid #fde68a"
+                    _hover={{ bg: '#fde68a', transform: 'scale(1.05)' }}
+                    transition="all 0.15s"
+                    onClick={() => { onDefendPlot(selectedPlot, def.id as 'scarecrow' | 'pesticide'); setSelectedPlot(null); }}
                   >
-                    {item.icon} {item.name} · 🪙 {item.cost}
+                    {def.icon} {def.name} · 🪙{def.cost}
                   </Button>
                 ))}
               </Flex>
             </Box>
           )}
 
-          <Button
-            mt={3}
-            size="sm"
-            variant="ghost"
-            color="#ef4444"
-            fontWeight="700"
-            fontSize="12px"
-            _hover={{ bg: '#fff1f2' }}
-            onClick={() => { onRemoveCrop(selectedPlot); setSelectedPlot(null); }}
-          >
-            🗑 Remove from garden
-          </Button>
+          {/* Remove crop */}
+          {selected?.cropId && (
+            <Button
+              size="sm" borderRadius="full"
+              bg="#fef2f2" color="#b91c1c" fontWeight="700" fontSize="sm"
+              border="1.5px solid #fecaca"
+              _hover={{ bg: '#fee2e2' }}
+              onClick={() => { onRemoveCrop(selectedPlot); setSelectedPlot(null); }}
+            >
+              🗑️ Remove crop
+            </Button>
+          )}
         </Box>
       )}
+
+      {/* ── Legend ────────────────────────────────────────────────── */}
+      <Flex gap={3} flexWrap="wrap" opacity={0.8}>
+        {[
+          { emoji: '🟩', label: 'Healthy' },
+          { emoji: '🌟', label: 'Harvest ready' },
+          { emoji: '🟫', label: 'Wilted' },
+          { emoji: '🔴', label: 'Pest attack' },
+          { emoji: '🟨', label: 'Selected' },
+        ].map(({ emoji, label }) => (
+          <HStack key={label} gap={1}>
+            <Text fontSize="12px">{emoji}</Text>
+            <Text fontSize="11px" fontWeight="600" color="gray.500">{label}</Text>
+          </HStack>
+        ))}
+      </Flex>
     </Box>
   );
 };
