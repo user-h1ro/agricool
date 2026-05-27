@@ -227,8 +227,11 @@ function unlockAchievement(userId: string, id: string): boolean {
   unlocked.add(id);
   const arr = [...unlocked];
   try { localStorage.setItem(`agricool_achievements_${userId}`, JSON.stringify(arr)); } catch {}
-  // persist to DB
-  supabase.from('farmer_progress').upsert({ user_id: userId, achievements: arr });
+  // persist to DB — onConflict ensures the full achievements array is written
+  supabase.from('farmer_progress').upsert(
+    { user_id: userId, achievements: arr },
+    { onConflict: 'user_id' }
+  );
   return true;
 }
 
@@ -433,7 +436,9 @@ function msUntilWindowCloses(crop: TrackedCrop): number {
 
 function isVerificationOpen(crop: TrackedCrop): boolean {
   const window = getCurrentWindow(crop);
-  if (window <= 0 && crop.initial_day === 0) return false;
+  // Window 0 is valid for all crops — this is the "Day 0 photo to start progress" window.
+  // The previous check `window <= 0 && initial_day === 0` incorrectly blocked day-0 crops
+  // from ever uploading their first photo.
   const queuedAt = new Date(crop.queued_at).getTime();
   const effectivePlanted = queuedAt - crop.initial_day * 86400000;
   const windowStart = effectivePlanted + window * 3 * 86400000;
@@ -481,38 +486,64 @@ const priorityColor: Record<Task['priority'], string> = {
   high: '#ef4444', medium: '#f59e0b', low: '#22c55e',
 };
 
-// ─── AI Health Check via Anthropic API ────────────────────────────────────────
+// ─── Photo Upload Helper ──────────────────────────────────────────────────────
+// Uploads a photo File to Supabase Storage and returns the public URL.
+// Falls back to base64 data URL if storage upload fails, so verification
+// still works even if the bucket isn't configured.
+async function uploadCropPhoto(userId: string, file: File): Promise<{ url: string; base64: string } | null> {
+  // Always read base64 for the AI check (which needs raw image data)
+  const base64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  }).catch(() => null);
+
+  if (!base64) return null;
+
+  // Try uploading to Supabase Storage so the URL stored in DB is short
+  try {
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? 'jpg';
+    const filename = `${Date.now()}.${ext}`;
+    const path = `${userId}/${filename}`;
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('crop-photos')
+      .upload(path, file, {
+        contentType: file.type || 'image/jpeg',
+        upsert: true,
+      });
+    if (uploadError) {
+      console.error('Storage upload error:', uploadError.message);
+    } else if (uploadData) {
+      const { data: urlData } = supabase.storage.from('crop-photos').getPublicUrl(path);
+      if (urlData?.publicUrl) {
+        console.log('Photo uploaded to storage:', urlData.publicUrl);
+        return { url: urlData.publicUrl, base64 };
+      }
+    }
+  } catch (e) {
+    console.error('Storage upload exception:', e);
+  }
+
+  // Fallback: use base64 directly
+  console.warn('Falling back to base64 photo storage');
+  return { url: base64, base64 };
+}
+
+// ─── AI Health Check via Supabase Edge Function ───────────────────────────────
+// Calls our edge function instead of Anthropic directly (avoids CORS block)
 async function checkPlantHealthAI(base64Image: string, cropName: string): Promise<string> {
   try {
-    const mediaTypeMatch = base64Image.match(/^data:(image\/\w+);base64,/);
-    const mediaType = (mediaTypeMatch?.[1] ?? 'image/jpeg') as 'image/jpeg' | 'image/png' | 'image/webp';
-    const pureBase64 = base64Image.replace(/^data:image\/\w+;base64,/, '');
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 120,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: 'image',
-              source: { type: 'base64', media_type: mediaType, data: pureBase64 },
-            },
-            {
-              type: 'text',
-              text: `This is a photo of a ${cropName} plant grown by a Filipino smallholder farmer. In 1–2 short sentences (max 25 words total), state if the plant looks healthy or describe the most visible problem (pest damage, yellowing, wilting, rot). Be direct and practical.`,
-            },
-          ],
-        }],
-      }),
+    const { data, error } = await supabase.functions.invoke('check-plant-health', {
+      body: { base64Image, cropName },
     });
-    if (!response.ok) return '🤖 AI check unavailable.';
-    const data = await response.json();
-    return data.content?.[0]?.text ?? '🤖 AI check unavailable.';
-  } catch {
+    if (error) {
+      console.error('Edge function error:', error);
+      return '🤖 AI check unavailable.';
+    }
+    return data?.note ?? '🤖 AI check unavailable.';
+  } catch (e) {
+    console.error('AI check failed:', e);
     return '🤖 AI check unavailable.';
   }
 }
@@ -1233,20 +1264,23 @@ const Leaderboard = ({ currentUserId }: { currentUserId: string }) => {
           if (c.status === 'harvest_ready') userMap[c.user_id].harvested += 1;
         });
 
-        // Fetch usernames from profiles table (or fall back to auth email prefix)
+        // Fetch display names from profiles table (prefer first+last name over email-based username)
         const userIds = Object.keys(userMap);
         const { data: profiles } = await supabase
           .from('profiles')
-          .select('id, username')
+          .select('id, first_name, last_name, username')
           .in('id', userIds);
 
         const profileMap: Record<string, string> = {};
-        (profiles ?? []).forEach((p: { id: string; username: string }) => { profileMap[p.id] = p.username; });
+        (profiles ?? []).forEach((p: { id: string; first_name?: string; last_name?: string; username?: string }) => {
+          const fullName = `${p.first_name || ''} ${p.last_name || ''}`.trim();
+          profileMap[p.id] = fullName || p.username || '';
+        });
 
         const leaderboard: LeaderboardRow[] = Object.entries(userMap)
           .map(([user_id, stats]) => ({
             user_id,
-            username: profileMap[user_id] ?? `Farmer_${user_id.slice(0, 5)}`,
+            username: profileMap[user_id] || `Farmer_${user_id.slice(0, 5)}`,
             total_points: stats.points,
             total_tokens: stats.tokens,
             crops_harvested: stats.harvested,
@@ -1754,7 +1788,14 @@ const LevelUpModal = ({ level, onClose }: { level: typeof FARMER_LEVELS[0]; onCl
 
 // ─── Achievement Toast ────────────────────────────────────────────────────────
 const AchievementToast = ({ achievement, onDone }: { achievement: Achievement; onDone: () => void }) => {
-  useEffect(() => { const t = setTimeout(onDone, 4000); return () => clearTimeout(t); }, [onDone]);
+  // Use a ref so the timer callback always calls the latest onDone without
+  // re-creating the timer on every render (which caused it to never fire).
+  const onDoneRef = useRef(onDone);
+  useEffect(() => { onDoneRef.current = onDone; });
+  useEffect(() => {
+    const t = setTimeout(() => onDoneRef.current(), 4000);
+    return () => clearTimeout(t);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const rarityColors: Record<string, string> = { common: '#22c55e', rare: '#3b82f6', epic: '#a855f7', legendary: '#f59e0b' };
   const color = rarityColors[achievement.rarity] ?? '#22c55e';
   return (
@@ -1974,12 +2015,15 @@ const DramaticLeaderboard = ({ currentUserId }: { currentUserId: string }) => {
           if (c.status === 'harvest_ready') userMap[c.user_id].harvested += 1;
         });
         const userIds = Object.keys(userMap);
-        const { data: profiles } = await supabase.from('profiles').select('id, username').in('id', userIds);
+        const { data: profiles } = await supabase.from('profiles').select('id, first_name, last_name, username').in('id', userIds);
         const profileMap: Record<string, string> = {};
-        (profiles ?? []).forEach((p: { id: string; username: string }) => { profileMap[p.id] = p.username; });
+        (profiles ?? []).forEach((p: { id: string; first_name?: string; last_name?: string; username?: string }) => {
+          const fullName = `${p.first_name || ''} ${p.last_name || ''}`.trim();
+          profileMap[p.id] = fullName || p.username || '';
+        });
         const leaderboard: LeaderboardRow[] = Object.entries(userMap)
           .map(([user_id, stats]) => ({
-            user_id, username: profileMap[user_id] ?? `Farmer_${user_id.slice(0, 5)}`,
+            user_id, username: profileMap[user_id] || `Farmer_${user_id.slice(0, 5)}`,
             total_points: stats.points, total_tokens: stats.tokens, crops_harvested: stats.harvested,
           }))
           .sort((a, b) => b.total_points - a.total_points).slice(0, 10);
@@ -2294,6 +2338,7 @@ const GamifiedDashboard = () => {
   const [crops, setCrops] = useState<TrackedCrop[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
+  const [profileUsername, setProfileUsername] = useState<string | null>(null);
   const [showAddCrop, setShowAddCrop] = useState(false);
   const [verifyingCrop, setVerifyingCrop] = useState<TrackedCrop | null>(null);
   const [verifyIsRecovery, setVerifyIsRecovery] = useState(false);
@@ -2308,6 +2353,7 @@ const GamifiedDashboard = () => {
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [activeTab, setActiveTab] = useState(0);
   const [showTutorial, setShowTutorial] = useState(false);
+  const [aiResultModal, setAiResultModal] = useState<{ cropName: string; emoji: string; note: string; photoUrl: string } | null>(null);
 
   // ── Gamification state ────────────────────────────────────────────────────
   const [farmerXP, setFarmerXP_state] = useState(0);
@@ -2338,6 +2384,17 @@ const GamifiedDashboard = () => {
     setFarmerXP_state(getFarmerXP(user.id));
     // Then hydrate from DB (source of truth)
     loadFarmerXPFromDB(user.id).then(xp => setFarmerXP_state(xp));
+    // Load profile username so nickname changes are immediately visible
+    supabase.from('profiles').select('first_name, last_name, username').eq('id', user.id).maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          // Prefer the user's actual name (first + last) over username,
+          // because username may still hold the old email-prefix value.
+          const fullName = `${data.first_name || ''} ${data.last_name || ''}`.trim();
+          const name = fullName || data.username || null;
+          if (name) setProfileUsername(name);
+        }
+      });
     // BUG FIX: loadAchievementsFromDB was called but its result was discarded,
     // so AchievementGallery never saw achievements stored in DB — it only read
     // from localStorage which starts empty on a fresh browser session.
@@ -2404,6 +2461,9 @@ const GamifiedDashboard = () => {
     if (isNew) {
       const a = ACHIEVEMENTS.find(x => x.id === id);
       if (a) {
+        // Bump seed immediately so AchievementGallery re-reads localStorage
+        // and lights up the newly unlocked achievement right away.
+        setAchievementSeed(s => s + 1);
         setTimeout(() => {
           setPendingAchievement(a);
           awardXP(a.xp, `Achievement: ${a.title}`);
@@ -2564,18 +2624,13 @@ const GamifiedDashboard = () => {
       }
     }
 
-    // Read as base64 data URL
-    const photoUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsDataURL(photoFile);
-    }).catch(() => null);
+    // Upload photo to storage (returns public URL + base64 for AI check)
+    const uploaded = await uploadCropPhoto(user.id, photoFile);
+    if (!uploaded) { setSaving(false); return; }
+    const { url: photoUrl, base64: photoBase64 } = uploaded;
 
-    if (!photoUrl) { setSaving(false); return; }
-
-    // Run AI health check in parallel (don't block on it)
-    const aiNotePromise = checkPlantHealthAI(photoUrl, crops.find(c => c.id === cropId)?.name ?? 'plant');
+    // Run AI health check in parallel using base64 (don't block on it)
+    const aiNotePromise = checkPlantHealthAI(photoBase64, crops.find(c => c.id === cropId)?.name ?? 'plant');
 
     const crop = crops.find(c => c.id === cropId);
     if (!crop) { setSaving(false); return; }
@@ -2612,19 +2667,33 @@ const GamifiedDashboard = () => {
 
     // Save journal entry (await AI result)
     const aiNote = await aiNotePromise;
-    await supabase.from('crop_journal').insert({
+
+    // Only store a URL in the DB — if storage upload worked it's a short URL,
+    // if it fell back to base64, truncate it to avoid row-size failures.
+    const safePhotoUrl = photoUrl.startsWith('data:')
+      ? photoUrl.substring(0, 500) + '...[photo stored locally]'
+      : photoUrl;
+
+    const { error: journalError } = await supabase.from('crop_journal').insert({
       crop_id: cropId,
       user_id: user.id,
       crop_name: crop.name,
       crop_emoji: crop.emoji,
       day_number: isRecovery ? getDaysSinceQueued(crop) : window * 3,
-      photo_url: photoUrl,
+      photo_url: safePhotoUrl,
       ai_health_note: aiNote,
       verified_at: serverNow().toISOString(),
     });
 
+    if (journalError) {
+      console.error('Journal insert failed:', journalError);
+      showToast(`⚠️ Journal save failed: ${journalError.message}`, 'error');
+    }
+
     await fetchCrops();
-    setJournalSeed(s => s + 1); // BUG FIX: force JournalTimeline to re-fetch after new photo
+    setJournalSeed(s => s + 1); // force JournalTimeline to re-fetch after new photo
+    // Auto-switch to Journal tab so the user can see their photo and AI result
+    setActiveTab(2);
 
     // Token grant — now goes through RevenueProvider properly
     if (tokenEarned) {
@@ -2651,7 +2720,8 @@ const GamifiedDashboard = () => {
       awardXP(XP_TABLE.recovery, 'Recovery');
       checkAndUnlockAchievement('recovery_hero');
     } else {
-      showToast(`✅ Verified! +1 progress point for ${crop.name}. 🤖 ${aiNote}`);
+      // Show AI result as a modal so the user can clearly see if it was verified
+      setAiResultModal({ cropName: crop.name, emoji: crop.emoji, note: aiNote, photoUrl: photoBase64 });
       awardXP(XP_TABLE.verify, 'Verification');
       setDailyVerifies(v => v + 1);
       advanceQuest('verify');
@@ -2679,14 +2749,9 @@ const GamifiedDashboard = () => {
   // ── Harvest ────────────────────────────────────────────────────────────────
   const handleHarvest = async (cropId: string, photoFile: File) => {
     if (!user) return;
-    const photoUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(new Error('Failed'));
-      reader.readAsDataURL(photoFile);
-    }).catch(() => null);
-
-    if (!photoUrl) return;
+    const uploaded = await uploadCropPhoto(user.id, photoFile);
+    if (!uploaded) return;
+    const { url: photoUrl } = uploaded;
 
     const crop = crops.find(c => c.id === cropId);
     if (!crop) return;
@@ -2708,7 +2773,8 @@ const GamifiedDashboard = () => {
     });
 
     await fetchCrops();
-    setJournalSeed(s => s + 1); // BUG FIX: refresh journal after harvest photo
+    setJournalSeed(s => s + 1); // refresh journal after harvest photo
+    setActiveTab(2); // auto-switch to Journal so user sees their harvest photo
     setBadgeCrop(crops.find(c => c.id === cropId) ?? null);
     showToast(`🌾 ${crop.name} harvested! Badge unlocked!`);
     setConfetti(true);
@@ -2827,7 +2893,7 @@ const GamifiedDashboard = () => {
     && !todayTasks.some(t => t.failed)
     && !todayTasks.some(t => !t.done && !t.failed && getTaskWindowState(t, now) === 'active');
   const pendingVerifications = crops.filter(c => isVerificationOpen(c) && c.status !== 'wilted').length;
-  const username = user?.email?.split('@')[0] ?? 'Farmer';
+  const username = profileUsername || user?.email?.split('@')[0] || 'Farmer';
 
   // ── Achievement triggers from derived stats ────────────────────────────────
   useEffect(() => {
@@ -2904,6 +2970,51 @@ const GamifiedDashboard = () => {
         />
       )}
       {badgeCrop && <HarvestBadgeModal crop={badgeCrop} onClose={() => setBadgeCrop(null)} />}
+
+      {/* AI Verification Result Modal */}
+      {aiResultModal && (
+        <Box position="fixed" inset={0} zIndex={1100} bg="rgba(0,0,0,0.65)"
+          display="flex" alignItems="center" justifyContent="center"
+          style={{ backdropFilter: 'blur(4px)' }}
+          onClick={() => setAiResultModal(null)}
+        >
+          <Box bg="white" borderRadius="24px" p={7} w="380px" maxW="95vw"
+            boxShadow="0 24px 64px rgba(0,0,0,0.25)"
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          >
+            {/* Photo thumbnail */}
+            <Box borderRadius="16px" overflow="hidden" h="160px" mb={5} position="relative">
+              <img src={aiResultModal.photoUrl} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <Box position="absolute" inset={0}
+                style={{ background: 'linear-gradient(to top, rgba(0,0,0,0.45) 0%, transparent 60%)' }} />
+              <Box position="absolute" bottom="10px" left="12px">
+                <Text fontSize="sm" fontWeight="900" color="white">
+                  {aiResultModal.emoji} {aiResultModal.cropName}
+                </Text>
+              </Box>
+            </Box>
+
+            <Box bg="#f0fdf4" border="1.5px solid #86efac" borderRadius="14px" px={4} py={3} mb={5}>
+              <Text fontSize="11px" fontWeight="900" color="#16a34a" letterSpacing="1px"
+                textTransform="uppercase" mb={1}>🤖 AI Health Check</Text>
+              <Text fontSize="13px" color="#14532d" fontWeight="600" lineHeight="1.5">
+                {aiResultModal.note}
+              </Text>
+            </Box>
+
+            <Box bg="#f0fdf4" borderRadius="12px" px={4} py={2.5} mb={5}>
+              <Text fontSize="12px" color="#16a34a" fontWeight="700">
+                ✅ +1 progress point earned! Check the Journal tab to see your growth timeline.
+              </Text>
+            </Box>
+
+            <Button w="100%" bg="#16a34a" color="white" borderRadius="12px" fontWeight="800"
+              _hover={{ bg: '#15803d' }} onClick={() => { setAiResultModal(null); setActiveTab(2); }}>
+              📓 View in Journal
+            </Button>
+          </Box>
+        </Box>
+      )}
 
       <Box maxW="1100px" mx="auto">
 

@@ -253,9 +253,24 @@ const Cart = () => {
   const { user } = useAuth();
 
   useEffect(() => {
-    const saved = JSON.parse(localStorage.getItem('agricool_cart') || '[]');
-    setCart(saved);
-  }, []);
+    const loadCart = async () => {
+      if (user) {
+        // Logged-in users: load from Supabase (MarketPlace saves here)
+        const { data } = await supabase
+          .from('cart_items')
+          .select('crop_data')
+          .eq('user_id', user.id);
+        if (data && data.length > 0) {
+          setCart(data.map((row: any) => row.crop_data));
+          return;
+        }
+      }
+      // Fallback to localStorage for unauthenticated users
+      const saved = JSON.parse(localStorage.getItem('agricool_cart') || '[]');
+      setCart(saved);
+    };
+    loadCart();
+  }, [user]);
 
   const updateQuantity = (index: number, newQuantity: number) => {
     if (newQuantity < 1) return;
@@ -265,15 +280,23 @@ const Cart = () => {
     localStorage.setItem('agricool_cart', JSON.stringify(updatedCart));
   };
 
-  const removeFromCart = (index: number) => {
+  const removeFromCart = async (index: number) => {
+    const item = cart[index];
+    if (user && item?.id) {
+      await supabase.from('cart_items').delete().eq('user_id', user.id).eq('crop_id', item.id);
+    }
     const newCart = cart.filter((_, i) => i !== index);
     setCart(newCart);
-    localStorage.setItem('agricool_cart', JSON.stringify(newCart));
+    if (!user) localStorage.setItem('agricool_cart', JSON.stringify(newCart));
   };
 
-  const clearCart = () => {
+  const clearCart = async () => {
+    if (user) {
+      await supabase.from('cart_items').delete().eq('user_id', user.id);
+    } else {
+      localStorage.removeItem('agricool_cart');
+    }
     setCart([]);
-    localStorage.removeItem('agricool_cart');
   };
 
   const total = cart.reduce((sum, item) => {

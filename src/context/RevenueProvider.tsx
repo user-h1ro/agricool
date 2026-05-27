@@ -167,6 +167,8 @@ export function RevenueProvider({ children }: PropsWithChildren) {
 
   // NEW: called by GamifiedDashboard when a milestone token is earned
   const grantListingToken = (reason: string) => {
+    // Re-read from storage to avoid stale closure value losing previously earned credits
+    const current = user?.id ? loadRevenue(user.id) : revenue;
     const tx: Transaction = {
       id: makeId(),
       type: 'listing_fee',
@@ -177,9 +179,9 @@ export function RevenueProvider({ children }: PropsWithChildren) {
       method: 'reward',
     };
     const updated: UserRevenue = {
-      ...revenue,
-      listingCredits: revenue.listingCredits + 1,
-      transactions: [tx, ...revenue.transactions],
+      ...current,
+      listingCredits: current.listingCredits + 1,
+      transactions: [tx, ...current.transactions],
     };
     save(updated);
   };

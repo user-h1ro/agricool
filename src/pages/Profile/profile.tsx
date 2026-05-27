@@ -360,12 +360,16 @@ const Profile = () => {
     if (!user) return;
     setSavingField(field);
     const value = field === 'first_name' ? editFirstName : editLastName;
+    // Compute the new display name so leaderboard and dashboard show it immediately
+    const newFirst = field === 'first_name' ? value : (profile?.first_name || '');
+    const newLast  = field === 'last_name'  ? value : (profile?.last_name  || '');
+    const displayName = `${newFirst} ${newLast}`.trim();
     const { error } = await supabase
       .from('profiles')
-      .update({ [field]: value })
+      .update({ [field]: value, ...(displayName ? { username: displayName } : {}) })
       .eq('id', user.id);
     if (!error) {
-      setProfile((prev: any) => ({ ...prev, [field]: value }));
+      setProfile((prev: any) => ({ ...prev, [field]: value, ...(displayName ? { username: displayName } : {}) }));
       showModal('success', 'Profile updated successfully!');
     } else {
       showModal('error', 'Failed to update profile');
