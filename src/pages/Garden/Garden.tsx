@@ -209,10 +209,14 @@ function dispatchCoinEvent(amount: number, newTotal: number, sourcePos?: { x: nu
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 const StatBadge = ({ emoji, label, value, color }: { emoji: string; label: string; value: string | number; color: string }) => (
-  <Box bg="white" borderRadius="14px" px={4} py={3} border="1.5px solid" borderColor={color + '44'} minW="90px">
-    <Text fontSize="lg">{emoji}</Text>
-    <Text fontSize="xl" fontWeight="900" color={color}>{value}</Text>
-    <Text fontSize="10px" fontWeight="700" color="gray.500" textTransform="uppercase" letterSpacing="0.5px">{label}</Text>
+  <Box bg="white" borderRadius="14px" px={4} py={3} border="1.5px solid" borderColor={color + '44'} minW="90px"
+    boxShadow={`0 2px 8px ${color}22`}>
+    {/* Hero metric — large and bold */}
+    <Text fontSize="2xl" fontWeight="900" color={color} lineHeight="1">{value}</Text>
+    {/* Supporting info — emoji + label, smaller and muted */}
+    <Text fontSize="11px" fontWeight="600" color="gray.400" mt={1} textTransform="uppercase" letterSpacing="0.5px">
+      {emoji} {label}
+    </Text>
   </Box>
 );
 
@@ -247,6 +251,7 @@ const GardenGrid = ({
   layout,
   activePests,
   trackedCrops,
+  equippedCosmetics,
   onPlaceCrop,
   onDefendPlot,
   onRemoveCrop,
@@ -254,12 +259,14 @@ const GardenGrid = ({
   layout: GardenLayout;
   activePests: PestEvent[];
   trackedCrops: TrackedCrop[];
+  equippedCosmetics: string[];
   onPlaceCrop: (idx: number, crop: TrackedCrop) => void;
   onDefendPlot: (idx: number, item: 'scarecrow' | 'pesticide') => void;
   onRemoveCrop: (idx: number) => void;
 }) => {
   const [selectedPlot, setSelectedPlot] = useState<number | null>(null);
   const [hoveredPlot,  setHoveredPlot]  = useState<number | null>(null);
+  const [clickedPlot,  setClickedPlot]  = useState<number | null>(null);
   const [pestWarning,  setPestWarning]  = useState(activePests.length > 0);
   const [tick, setTick] = useState(0);
 
@@ -284,9 +291,9 @@ const GardenGrid = ({
 
   // SVG canvas: enough room for 5×5 isometric + headroom for tall plants
   const CANVAS_W = 560;
-  const CANVAS_H = 380;
+  const CANVAS_H = 420;
   const OFFSET_X = CANVAS_W / 2;          // horizontal centre
-  const OFFSET_Y = 60;                     // top padding
+  const OFFSET_Y = 90;                     // top padding — extra room for crops above back row
 
   // Sort plots back-to-front (painter's algorithm) so front tiles overlap rear
   const renderOrder = Array.from({ length: 25 }, (_, i) => {
@@ -315,6 +322,7 @@ const GardenGrid = ({
         @keyframes iso-sparkle { 0%{opacity:0;transform:scale(0) translateY(0)} 40%{opacity:1;transform:scale(1.3) translateY(-12px)} 100%{opacity:0;transform:scale(.8) translateY(-22px)} }
         @keyframes iso-defend  { 0%,100%{transform:scale(1)} 50%{transform:scale(1.15)} }
         @keyframes iso-grow    { 0%{transform:scaleY(.3) translateY(8px)} 100%{transform:scaleY(1) translateY(0)} }
+        @keyframes iso-click-pop { 0%{transform:scale(1)} 40%{transform:scale(1.08)} 100%{transform:scale(1)} }
       `}</style>
 
       {/* ── Pest invasion warning banner ───────────────────────────── */}
@@ -358,22 +366,31 @@ const GardenGrid = ({
         position="relative"
         borderRadius="24px"
         overflow="hidden"
-        bg="linear-gradient(160deg,#d1fae5 0%,#bbf7d0 40%,#a7f3d0 100%)"
+        bg="linear-gradient(160deg,#d9f5c8 0%,#c8edb0 40%,#b8e8a0 100%)"
         boxShadow="0 12px 48px rgba(20,83,45,0.18), inset 0 1px 0 rgba(255,255,255,0.6)"
         border="2px solid rgba(134,239,172,0.6)"
         mb={4}
       >
-        {/* Sky gradient strip */}
+        {/* Expanded sky zone with sun — ~25% canvas height */}
         <Box
-          position="absolute" top={0} left={0} right={0} h="70px"
-          bg="linear-gradient(180deg,#bfdbfe 0%,transparent 100%)"
+          position="absolute" top={0} left={0} right={0} h="100px"
+          bg="linear-gradient(180deg,#93c5fd 0%,#bfdbfe 60%,transparent 100%)"
           pointerEvents="none"
-        />
+        >
+          {/* Animated sun peeking from top-right */}
+          <Box
+            position="absolute" top="-18px" right="40px"
+            w="56px" h="56px" borderRadius="full"
+            bg="linear-gradient(135deg,#fde68a,#fbbf24)"
+            boxShadow="0 0 28px 12px rgba(251,191,36,0.35)"
+            style={{ animation: 'iso-defend 4s ease-in-out infinite' }}
+          />
+        </Box>
 
         <svg
           viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}
           width="100%"
-          style={{ display: 'block', maxHeight: '420px' }}
+          style={{ display: 'block', maxHeight: '460px' }}
         >
           {/* ── Ambient drifting items ────────────────────────── */}
           {AMBIENT_ITEMS.map((item, ai) => {
@@ -392,7 +409,7 @@ const GardenGrid = ({
           {/* ── Ground shadow plane ───────────────────────────── */}
           <ellipse
             cx={OFFSET_X} cy={OFFSET_Y + (COLS + ROWS) * (ISO_TILE_H / 2) + 10}
-            rx={COLS * ISO_TILE_W * 0.52} ry={18}
+            rx={COLS * ISO_TILE_W * 0.46} ry={14}
             fill="rgba(20,83,45,0.12)"
           />
 
@@ -434,10 +451,43 @@ const GardenGrid = ({
               ${tx + half_w},${ty + 14}
             `;
 
-            // Tile colour logic
-            let topColor  = isEmpty ? '#86efac' : (plot.status === 'wilted' ? '#92400e' : '#4ade80');
-            let leftColor = isEmpty ? '#166534' : (plot.status === 'wilted' ? '#78350f' : '#15803d');
-            let rightColor= isEmpty ? '#15803d' : (plot.status === 'wilted' ? '#92400e' : '#16a34a');
+            // Tile colour logic — each state gets a distinct soil palette
+            // Empty: sun-bleached tan; Growing: rich tilled soil; Healthy: lush dark green;
+            // Harvest ready: warm golden; Wilted: dry cracked brown; Pest: alarming red
+            let topColor: string;
+            let leftColor: string;
+            let rightColor: string;
+
+            if (isEmpty) {
+              // Sun-bleached, dry empty plot — warm tan/beige
+              topColor   = '#d4c4a0';
+              leftColor  = '#8b7355';
+              rightColor = '#a08060';
+            } else if (plot.status === 'growing') {
+              // Freshly tilled dark soil — rich dark brown
+              topColor   = '#6b4226';
+              leftColor  = '#3d2010';
+              rightColor = '#4e2e18';
+            } else if (plot.status === 'healthy') {
+              // Lush, thriving — deep green with mossy tones
+              topColor   = '#22c55e';
+              leftColor  = '#14532d';
+              rightColor = '#166534';
+            } else if (plot.status === 'harvest_ready') {
+              // Golden, ripe — warm amber soil
+              topColor   = '#fbbf24';
+              leftColor  = '#92400e';
+              rightColor = '#b45309';
+            } else if (plot.status === 'wilted') {
+              // Cracked, dry — dusty reddish-brown
+              topColor   = '#7c3b1a';
+              leftColor  = '#450a00';
+              rightColor = '#6b2210';
+            } else {
+              topColor   = '#86efac';
+              leftColor  = '#166534';
+              rightColor = '#15803d';
+            }
 
             if (hasPest) {
               topColor   = '#fca5a5';
@@ -449,9 +499,10 @@ const GardenGrid = ({
               leftColor  = '#b45309';
               rightColor = '#d97706';
             } else if (isHov) {
-              topColor   = '#bbf7d0';
-              leftColor  = '#14532d';
-              rightColor = '#166534';
+              topColor   = isEmpty ? '#e8dfc0' : (topColor);
+              // Lighten top slightly on hover
+              leftColor  = leftColor;
+              rightColor = rightColor;
             }
 
             // Plant float/sway/shake offset
@@ -470,11 +521,27 @@ const GardenGrid = ({
             return (
               <g
                 key={idx}
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelectedPlot(selectedPlot === idx ? null : idx)}
+                style={{
+                  cursor: 'pointer',
+                  animation: clickedPlot === idx ? 'iso-click-pop 0.18s ease-out' : undefined,
+                  transformOrigin: `${tx}px ${ty}px`,
+                }}
+                onClick={() => {
+                  setClickedPlot(idx);
+                  setTimeout(() => setClickedPlot(null), 180);
+                  setSelectedPlot(selectedPlot === idx ? null : idx);
+                }}
                 onMouseEnter={() => setHoveredPlot(idx)}
                 onMouseLeave={() => setHoveredPlot(null)}
               >
+                {/* Cast shadow ellipse — front row tiles cast a subtle shadow */}
+                {row === ROWS - 1 && (
+                  <ellipse
+                    cx={tx} cy={ty + half_h + 16}
+                    rx={half_w * 0.65} ry={6}
+                    fill="rgba(0,0,0,0.13)"
+                  />
+                )}
                 {/* Tile box: right face */}
                 <polygon points={rightFace} fill={rightColor} />
                 {/* Tile box: left face */}
@@ -549,6 +616,18 @@ const GardenGrid = ({
                     style={{ transition: 'font-size 0.15s', userSelect: 'none' }}
                   >+</text>
                 )}
+                {/* Empty state — center tile (idx 12) shows seedling hint when all plots are empty */}
+                {idx === 12 && isEmpty && layout.every(p => !p.cropId) && (
+                  <>
+                    <text x={tx} y={ty - 22} textAnchor="middle" fontSize={22}
+                      style={{ userSelect: 'none', animation: 'iso-float 2s ease-in-out infinite' }}
+                    >🌱</text>
+                    <text x={tx} y={ty - 42} textAnchor="middle" fontSize={8}
+                      fill="#166534" fontWeight="700"
+                      style={{ userSelect: 'none', opacity: 0.7 }}
+                    >Tap to plant!</text>
+                  </>
+                )}
 
                 {/* Defense item badge */}
                 {plot.defenseItem && (
@@ -597,16 +676,85 @@ const GardenGrid = ({
                   >✨</text>
                 ))}
 
-                {/* Plot index label (top face, faint) */}
-                <text
-                  x={tx} y={ty + 2}
-                  textAnchor="middle" dominantBaseline="middle"
-                  fontSize={9} fill="rgba(20,83,45,0.35)" fontWeight="700"
-                  style={{ userSelect: 'none', pointerEvents: 'none' }}
-                >{idx + 1}</text>
+                {/* Plot index label — only on hover, acts as a subtle tooltip */}
+                {isHov && (
+                  <text
+                    x={tx} y={ty + 2}
+                    textAnchor="middle" dominantBaseline="middle"
+                    fontSize={9} fill="rgba(20,83,45,0.7)" fontWeight="800"
+                    style={{ userSelect: 'none', pointerEvents: 'none' }}
+                  >{idx + 1}</text>
+                )}
               </g>
             );
           })}
+          {/* ── Fence/border rendering for equipped cosmetics ─── */}
+          {(() => {
+            const hasFence = equippedCosmetics.some(id => ['bamboo_fence','stone_wall'].includes(id));
+            const hasBorder = equippedCosmetics.some(id => ['sunflower_border','lily_pad_border'].includes(id));
+            if (!hasFence && !hasBorder) return null;
+
+            const fenceCosmetic = equippedCosmetics.find(id => ['bamboo_fence','stone_wall'].includes(id));
+            const borderCosmetic = equippedCosmetics.find(id => ['sunflower_border','lily_pad_border'].includes(id));
+            const fenceColor = fenceCosmetic === 'stone_wall' ? '#6b7280' : '#92400e';
+            const fenceStroke = fenceCosmetic === 'stone_wall' ? '#4b5563' : '#78350f';
+            const postEmoji = fenceCosmetic === 'stone_wall' ? '🧱' : '🪵';
+            const borderEmoji = borderCosmetic === 'sunflower_border' ? '🌻' : '🪷';
+
+            // Compute the 4 corner positions of the 5x5 grid in SVG space
+            const topCorner    = isoProject(0, 0);
+            const rightCorner  = isoProject(COLS - 1, 0);
+            const bottomCorner = isoProject(COLS - 1, ROWS - 1);
+            const leftCorner   = isoProject(0, ROWS - 1);
+
+            // Build fence perimeter path (diamond-shaped outline around entire grid)
+            const fPts = [
+              [OFFSET_X + topCorner.x,    OFFSET_Y + topCorner.y    - ISO_TILE_H / 2],
+              [OFFSET_X + rightCorner.x  + ISO_TILE_W / 2, OFFSET_Y + rightCorner.y],
+              [OFFSET_X + bottomCorner.x, OFFSET_Y + bottomCorner.y + ISO_TILE_H / 2 + 14],
+              [OFFSET_X + leftCorner.x   - ISO_TILE_W / 2, OFFSET_Y + leftCorner.y  + 14],
+            ];
+            const fPath = fPts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0]},${p[1]}`).join(' ') + ' Z';
+
+            // Post positions — one at each corner + midpoints
+            const postPositions = [
+              ...fPts,
+              [(fPts[0][0] + fPts[1][0]) / 2, (fPts[0][1] + fPts[1][1]) / 2],
+              [(fPts[1][0] + fPts[2][0]) / 2, (fPts[1][1] + fPts[2][1]) / 2],
+              [(fPts[2][0] + fPts[3][0]) / 2, (fPts[2][1] + fPts[3][1]) / 2],
+              [(fPts[3][0] + fPts[0][0]) / 2, (fPts[3][1] + fPts[0][1]) / 2],
+            ];
+
+            return (
+              <g pointerEvents="none">
+                {hasFence && (
+                  <>
+                    <path d={fPath} fill="none" stroke={fenceColor} strokeWidth={3}
+                      strokeDasharray="8,4" opacity={0.8} />
+                    {postPositions.map(([px, py], pi) => (
+                      <text key={pi} x={px} y={py} fontSize={14} textAnchor="middle"
+                        dominantBaseline="middle"
+                        style={{ userSelect: 'none', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.3))' }}
+                      >{postEmoji}</text>
+                    ))}
+                  </>
+                )}
+                {hasBorder && !hasFence && (
+                  postPositions.map(([px, py], pi) => (
+                    <text key={pi} x={px} y={py} fontSize={16} textAnchor="middle"
+                      dominantBaseline="middle"
+                      style={{
+                        userSelect: 'none',
+                        animation: `iso-float ${2 + (pi % 3) * 0.4}s ease-in-out infinite`,
+                        animationDelay: `${pi * 0.2}s`,
+                        filter: 'drop-shadow(0 2px 3px rgba(0,0,0,0.2))',
+                      }}
+                    >{borderEmoji}</text>
+                  ))
+                )}
+              </g>
+            );
+          })()}
         </svg>
 
         {/* Ambient overlay label */}
@@ -623,7 +771,7 @@ const GardenGrid = ({
           bg="white" borderRadius="20px" p={5} mb={4}
           border="1.5px solid #d1fae5"
           boxShadow="0 8px 32px rgba(20,83,45,0.12)"
-          style={{ animation: 'iso-pest-in 0.25s ease-out' }}
+          style={{ animation: 'action-panel-in 0.2s ease-out' }}
         >
           <HStack justify="space-between" mb={3}>
             <Text fontWeight="900" fontSize="md" color="#14532d">
@@ -789,7 +937,21 @@ const CosmeticsShop = ({
                     transition="all 0.2s"
                     _hover={{ borderColor: '#86efac', transform: 'translateY(-1px)' }}
                   >
-                    <Text fontSize="28px" mb={1}>{item.icon}</Text>
+                    {/* Mini isometric tile preview — 64×40px */}
+                    <Box mb={2} position="relative" display="inline-block">
+                      <svg width="64" height="40" viewBox="0 0 64 40" style={{ display: 'block' }}>
+                        {/* Tile top */}
+                        <polygon points="32,4 60,18 32,32 4,18" fill={isEquipped ? '#22c55e' : '#a8d5a2'} />
+                        {/* Tile left face */}
+                        <polygon points="4,18 32,32 32,40 4,26" fill={isEquipped ? '#14532d' : '#5a8c55'} />
+                        {/* Tile right face */}
+                        <polygon points="60,18 32,32 32,40 60,26" fill={isEquipped ? '#166534' : '#6aab64'} />
+                        {/* Cosmetic icon centered on tile */}
+                        <text x="32" y="21" textAnchor="middle" dominantBaseline="middle" fontSize="16"
+                          style={{ userSelect: 'none' }}
+                        >{item.icon}</text>
+                      </svg>
+                    </Box>
                     <Text fontWeight="700" fontSize="13px" color="#374151" mb={0}>{item.name}</Text>
                     <Text fontSize="11px" color="gray.400" mb={2} lineHeight="1.4">{item.description}</Text>
 
@@ -1618,6 +1780,7 @@ const Garden = () => {
             layout={gardenState.layout}
             activePests={gardenState.activePests}
             trackedCrops={trackedCrops}
+            equippedCosmetics={gardenState.equippedCosmetics}
             onPlaceCrop={handlePlaceCrop}
             onDefendPlot={handleDefendPlot}
             onRemoveCrop={handleRemoveCrop}
@@ -1662,6 +1825,10 @@ const Garden = () => {
         @keyframes card-in {
           from { opacity: 0; transform: translateX(-50%) translateY(8px); }
           to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
+        @keyframes action-panel-in {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0); }
         }
       `}</style>
     </Box>
