@@ -11,6 +11,7 @@ import {
   LuFlower2,
 } from 'react-icons/lu';
 import { useAuth } from '@/context/AuthProvider';
+import ConfirmModal from '@/components/ConfirmModal';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '@/supabase';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -47,6 +48,7 @@ const TopBar = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [logoutModalOpen, setLogoutModalOpen] = useState(false);
   const { playNotificationSound, playCoinSound } = useMusic();
 
   // ── Coin state — reactive, not read-once ──────────────────────────────────
@@ -396,7 +398,7 @@ const TopBar = () => {
               color="white"
               _hover={{ bg: 'whiteAlpha.300' }}
               size="md"
-              onClick={logout}
+              onClick={() => setLogoutModalOpen(true)}
               title="Logout"
             >
               <LuLogOut size={22} />
@@ -404,6 +406,19 @@ const TopBar = () => {
           </HStack>
         </HStack>
       </Box>
+
+      {/* Logout confirmation modal */}
+      <ConfirmModal
+        isOpen={logoutModalOpen}
+        onClose={() => setLogoutModalOpen(false)}
+        onConfirm={async () => { await logout(); setLogoutModalOpen(false); }}
+        variant="warning"
+        icon="🌾"
+        title="Log out of AgriCool?"
+        message="You'll need to sign back in to access your farm dashboard, marketplace, and crops."
+        confirmLabel="Yes, log me out"
+        cancelLabel="Stay signed in"
+      />
     </>
   );
 };

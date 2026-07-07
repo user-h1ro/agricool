@@ -272,12 +272,22 @@ const Cart = () => {
     loadCart();
   }, [user]);
 
-  const updateQuantity = (index: number, newQuantity: number) => {
+  const updateQuantity = async (index: number, newQuantity: number) => {
     if (newQuantity < 1) return;
     const updatedCart = [...cart];
-    updatedCart[index] = { ...updatedCart[index], quantity: newQuantity };
+    const updatedItem = { ...updatedCart[index], quantity: newQuantity };
+    updatedCart[index] = updatedItem;
     setCart(updatedCart);
-    localStorage.setItem('agricool_cart', JSON.stringify(updatedCart));
+
+    if (user && updatedItem?.id) {
+      await supabase
+        .from('cart_items')
+        .update({ crop_data: updatedItem })
+        .eq('user_id', user.id)
+        .eq('crop_id', updatedItem.id);
+    } else {
+      localStorage.setItem('agricool_cart', JSON.stringify(updatedCart));
+    }
   };
 
   const removeFromCart = async (index: number) => {

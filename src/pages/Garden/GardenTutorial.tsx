@@ -381,219 +381,297 @@ const FakePestAttack = ({ onInteract }: { onInteract: () => void }) => {
   );
 };
 
-// ─── Interactive: Cosmetics Shop ──────────────────────────────────────────────
-const FakeCosmeticsShop = ({ onInteract }: { onInteract: () => void }) => {
-  const [coins]        = useState(80);
-  const [equipped, setEquipped] = useState<string | null>(null);
+// ─── Interactive: Select a Plot ───────────────────────────────────────────────
+const FakePlotSelect = ({ onInteract }: { onInteract: () => void }) => {
+  const [selected, setSelected] = useState<number | null>(null);
   const [done, setDone] = useState(false);
 
-  const items = [
-    { id: 'fence',   name: 'Bamboo Fence',     cost: 30,  icon: '🪵', preview: '🟫' },
-    { id: 'flower',  name: 'Sunflower Border',  cost: 50,  icon: '🌻', preview: '🌻' },
-    { id: 'rain',    name: 'Rain Catcher',      cost: 75,  icon: '🌧️', preview: '💧' },
+  const plots = [
+    { emoji: '🍅', status: 'Healthy', hp: 3, growth: '~1 day left' },
+    null,
+    null,
   ];
 
-  const equip = (id: string, cost: number) => {
-    if (cost > coins) return;
-    setEquipped(id);
+  const select = (i: number) => {
+    if (!plots[i]) return;
+    setSelected(i);
     if (!done) { setDone(true); onInteract(); }
   };
 
   return (
     <div style={{ marginTop: 12 }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        marginBottom: 10,
-      }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>Your balance:</span>
-        <span style={{
-          background: '#fef3c7', border: '1.5px solid #fde68a',
-          borderRadius: 99, padding: '3px 12px', fontSize: 13, fontWeight: 900, color: '#b45309',
-        }}>🪙 {coins} coins</span>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 6 }}>
+        Tap the planted plot to inspect it:
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {items.map(item => {
-          const isEquipped  = equipped === item.id;
-          const canAfford   = item.cost <= coins;
-          return (
-            <div
-              key={item.id}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 12,
-                background: isEquipped ? '#f0fdf4' : 'white',
-                border: `1.5px solid ${isEquipped ? '#86efac' : '#e5e7eb'}`,
-                borderRadius: 12, padding: '10px 14px',
-                transition: 'all 0.2s',
-              }}
-            >
-              <span style={{ fontSize: 28 }}>{item.icon}</span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>{item.name}</div>
-                <div style={{ fontSize: 11, color: '#9ca3af' }}>Garden decoration</div>
-              </div>
-              <span style={{ fontSize: 12, fontWeight: 800, color: '#b45309' }}>🪙 {item.cost}</span>
-              <button
-                onClick={() => equip(item.id, item.cost)}
-                disabled={!canAfford || isEquipped}
-                style={{
-                  background: isEquipped ? '#16a34a' : canAfford ? '#059669' : '#e5e7eb',
-                  color: isEquipped || canAfford ? 'white' : '#9ca3af',
-                  border: 'none', borderRadius: 8, padding: '6px 12px',
-                  fontSize: 12, fontWeight: 700,
-                  cursor: canAfford && !isEquipped ? 'pointer' : 'default',
-                }}
-              >
-                {isEquipped ? '✓ Equipped' : canAfford ? 'Equip' : 'Can\'t afford'}
-              </button>
-            </div>
-          );
-        })}
+      <div style={{ display: 'flex', gap: 8, marginBottom: selected !== null ? 10 : 0 }}>
+        {plots.map((p, i) => (
+          <div
+            key={i}
+            onClick={() => select(i)}
+            style={{
+              width: 64, height: 64, borderRadius: 12,
+              background: selected === i ? '#f0fdf4' : p ? '#fefce8' : '#ecfdf5',
+              border: `2px solid ${selected === i ? '#059669' : p ? '#fde68a' : '#d1fae5'}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 30, cursor: p ? 'pointer' : 'default', position: 'relative',
+              transition: 'all 0.2s', flexShrink: 0,
+              boxShadow: selected === i ? '0 0 0 3px #05966933' : 'none',
+            }}
+          >
+            {p ? p.emoji : ''}
+            {p && selected !== i && (
+              <span className="gdn-interact-hint" style={{ position: 'absolute', top: -6, right: -6, fontSize: 14 }}>👆</span>
+            )}
+          </div>
+        ))}
       </div>
-      {equipped && (
+      {selected !== null && plots[selected] && (
         <div style={{
-          marginTop: 8, fontSize: 12, fontWeight: 700, color: '#059669',
-          background: '#f0fdf4', padding: '6px 10px', borderRadius: 8,
-          border: '1px solid #86efac',
+          background: '#fff', border: '1.5px solid #86efac', borderRadius: 12, padding: 12,
+          animation: 'card-in 0.25s ease',
         }}>
-          ✅ Cosmetic equipped! It shows up on your garden and when others visit.
+          <div style={{ fontSize: 12, fontWeight: 800, color: '#14532d', marginBottom: 6 }}>
+            🍅 Tomato — Plot #1
+          </div>
+          {[
+            ['Growth stage', plots[selected]!.status],
+            ['Time left', plots[selected]!.growth],
+            ['Health', `${plots[selected]!.hp}/3 HP`],
+            ['Protection', 'Unprotected'],
+          ].map(([k, v]) => (
+            <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+              <span style={{ color: '#6b7280', fontWeight: 600 }}>{k}</span>
+              <span style={{ color: '#111827', fontWeight: 800 }}>{v}</span>
+            </div>
+          ))}
+          <div style={{ fontSize: 11, color: '#059669', fontWeight: 700, marginTop: 6 }}>
+            💡 The same info panel opens in-game when you tap any plot.
+          </div>
         </div>
       )}
     </div>
   );
 };
 
-// ─── Interactive: Garden Visitor ──────────────────────────────────────────────
-const FakeGardenVisit = ({ onInteract }: { onInteract: () => void }) => {
-  const [visited, setVisited]   = useState(false);
-  const [leafed, setLeafed]     = useState(false);
+// ─── Interactive: Monitor & Care for Crop Health ──────────────────────────────
+const FakeCropCare = ({ onInteract }: { onInteract: () => void }) => {
+  const [growth, setGrowth] = useState(35);
+  const [health, setHealth] = useState(2);
+  const [done, setDone] = useState(false);
+  const [lastAction, setLastAction] = useState('');
 
-  const visit = () => { setVisited(true); onInteract(); };
-  const dropLeaf = () => { setLeafed(true); };
+  const act = (type: 'water' | 'fertilize') => {
+    if (type === 'water') {
+      setHealth(h => Math.min(3, h + 1));
+      setLastAction('💧 Watered — health restored!');
+    } else {
+      setGrowth(g => Math.min(100, g + 30));
+      setLastAction('🌿 Fertilized — growth boosted!');
+    }
+    if (!done) { setDone(true); onInteract(); }
+  };
 
-  const neighbors = [
-    { name: 'Maria F.', crops: 4, cosmetic: '🌻', pts: 42 },
-    { name: 'Jose M.',  crops: 2, cosmetic: '🪵', pts: 28 },
+  const stage = growth >= 100 ? 'Harvest ready! 🌟' : growth >= 60 ? 'Healthy' : 'Growing';
+  const healthColor = health === 3 ? '#16a34a' : health === 2 ? '#f59e0b' : '#ef4444';
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{
+        background: '#f9fafb', border: '1.5px solid #e5e7eb', borderRadius: 12, padding: 12, marginBottom: 10,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+          <span style={{ fontSize: 26 }}>🥬</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#374151' }}>Pechay — {stage}</div>
+            <div style={{ fontSize: 10, color: '#9ca3af' }}>Checked from Garden every day</div>
+          </div>
+        </div>
+        <div style={{ marginBottom: 6 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 2 }}>
+            <span style={{ fontWeight: 700, color: '#6b7280' }}>🌱 Growth</span>
+            <span style={{ fontWeight: 800, color: '#059669' }}>{growth}%</span>
+          </div>
+          <div style={{ height: 7, background: '#d1fae5', borderRadius: 99, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${growth}%`, background: '#059669', borderRadius: 99, transition: 'width 0.5s ease' }} />
+          </div>
+        </div>
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, marginBottom: 2 }}>
+            <span style={{ fontWeight: 700, color: '#6b7280' }}>❤️ Health</span>
+            <span style={{ fontWeight: 800, color: healthColor }}>{health}/3 HP</span>
+          </div>
+          <div style={{ height: 7, background: '#fee2e2', borderRadius: 99, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${(health / 3) * 100}%`, background: healthColor, borderRadius: 99, transition: 'width 0.5s ease' }} />
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button
+          onClick={() => act('water')}
+          style={{ flex: 1, background: '#eff6ff', color: '#1d4ed8', border: '1.5px solid #93c5fd', borderRadius: 10, padding: '9px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+        >
+          💧 Water
+        </button>
+        <button
+          onClick={() => act('fertilize')}
+          style={{ flex: 1, background: '#f0fdf4', color: '#15803d', border: '1.5px solid #86efac', borderRadius: 10, padding: '9px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+        >
+          🌿 Fertilize
+        </button>
+      </div>
+      {lastAction && (
+        <div style={{ marginTop: 8, fontSize: 11, fontWeight: 700, color: '#059669' }}>{lastAction}</div>
+      )}
+    </div>
+  );
+};
+
+// ─── Interactive: Harvest a Crop ──────────────────────────────────────────────
+const FakeHarvest = ({ onInteract }: { onInteract: () => void }) => {
+  const [harvested, setHarvested] = useState(false);
+
+  const harvest = () => { setHarvested(true); onInteract(); };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      {!harvested ? (
+        <div style={{
+          background: 'linear-gradient(135deg, #fffbeb, #fef9c3)',
+          border: '2px solid #fde047', borderRadius: 14, padding: 14,
+          display: 'flex', alignItems: 'center', gap: 12,
+          boxShadow: '0 0 0 4px #fef08a55',
+        }}>
+          <span style={{ fontSize: 34 }}>🌾</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: '#854d0e' }}>Rice — Ready! ✨</div>
+            <div style={{ fontSize: 11, color: '#a16207' }}>Fully grown and waiting to be collected.</div>
+          </div>
+          <button
+            onClick={harvest}
+            className="gdn-interact-hint"
+            style={{
+              background: '#d97706', color: 'white', border: 'none', borderRadius: 10,
+              padding: '10px 14px', fontSize: 12, fontWeight: 800, cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+          >
+            🌾 Harvest
+          </button>
+        </div>
+      ) : (
+        <div style={{
+          background: '#f0fdf4', border: '1.5px solid #86efac', borderRadius: 14, padding: 14,
+          textAlign: 'center', animation: 'card-in 0.3s ease',
+        }}>
+          <div style={{ fontSize: 24, marginBottom: 4 }}>🎉 +30 🪙</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#15803d' }}>
+            Harvested! Coins added, XP earned, and the plot is free to plant again.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Interactive: Garden Features (shop · visit · events) ────────────────────
+const FakeGardenFeatures = ({ onInteract }: { onInteract: () => void }) => {
+  const [tab, setTab] = useState<'shop' | 'visit' | 'events'>('shop');
+  const [done, setDone] = useState(false);
+  const [equipped, setEquipped] = useState(false);
+  const [leafed, setLeafed] = useState(false);
+  const [claimed, setClaimed] = useState(false);
+
+  const markDone = () => { if (!done) { setDone(true); onInteract(); } };
+
+  const tabs: { id: typeof tab; label: string }[] = [
+    { id: 'shop', label: '🎨 Shop' },
+    { id: 'visit', label: '🏡 Visit' },
+    { id: 'events', label: '🌧️ Events' },
   ];
 
   return (
     <div style={{ marginTop: 12 }}>
-      {!visited ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 2 }}>
-            Nearby farmers — click a garden to visit:
-          </div>
-          {neighbors.map(n => (
-            <button
-              key={n.name}
-              onClick={visit}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                background: 'white', border: '1.5px solid #d1d5db',
-                borderRadius: 12, padding: '10px 14px', cursor: 'pointer',
-                transition: 'all 0.2s', textAlign: 'left',
-              }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = '#86efac'}
-              onMouseLeave={e => e.currentTarget.style.borderColor = '#d1d5db'}
-            >
-              <span style={{ fontSize: 24 }}>{n.cosmetic}</span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>{n.name}'s Garden</div>
-                <div style={{ fontSize: 11, color: '#9ca3af' }}>{n.crops} active crops · {n.pts} pts</div>
-              </div>
-              <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>Visit →</span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div style={{
-          background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
-          border: '1.5px solid #86efac', borderRadius: 14, padding: 14,
-        }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: '#14532d', marginBottom: 8 }}>
-            🌻 You're visiting Maria F.'s Garden!
-          </div>
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 5,
-            marginBottom: 10,
-          }}>
-            {['🌾', '🍅', '🥬', '🫑', null, null, null, null, null].map((crop, i) => (
-              <div key={i} style={{
-                height: 44, borderRadius: 8,
-                background: crop ? '#f0fdf4' : '#ecfdf5',
-                border: `1.5px ${crop ? 'solid #86efac' : 'dashed #d1fae5'}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 20,
-              }}>
-                {crop || ''}
-              </div>
-            ))}
-          </div>
-          {!leafed ? (
-            <button
-              onClick={dropLeaf}
-              style={{
-                width: '100%', background: '#059669', color: 'white',
-                border: 'none', borderRadius: 10, padding: '9px',
-                fontSize: 13, fontWeight: 700, cursor: 'pointer',
-              }}
-            >
-              🍃 Drop a Leaf (like this garden!)
-            </button>
-          ) : (
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#16a34a' }}>
-              🍃 Leaf dropped! Maria F. will see your reaction. +1 AgriCoin for you!
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ─── Interactive: Seasonal Event ──────────────────────────────────────────────
-const FakeSeasonalEvent = ({ onInteract }: { onInteract: () => void }) => {
-  const [claimed, setClaimed] = useState(false);
-
-  const claim = () => { setClaimed(true); onInteract(); };
-
-  return (
-    <div style={{ marginTop: 12 }}>
-      <div style={{
-        background: 'linear-gradient(135deg, #eff6ff, #dbeafe)',
-        border: '2px solid #93c5fd', borderRadius: 14, padding: 14, marginBottom: 10,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <span style={{ fontSize: 22 }}>🌧️</span>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: '#1d4ed8' }}>Rainy Season Event</div>
-            <div style={{ fontSize: 11, color: '#3b82f6' }}>Runs 7 more days · Almanac-linked</div>
-          </div>
-          <span style={{
-            marginLeft: 'auto', background: '#fef3c7',
-            color: '#b45309', fontSize: 11, fontWeight: 700,
-            borderRadius: 99, padding: '2px 10px',
-          }}>LIVE 🔴</span>
-        </div>
-        <div style={{ fontSize: 12, color: '#374151', fontWeight: 500, marginBottom: 10 }}>
-          Harvest any crop this week for <strong>2× AgriCoins</strong> + unlock the limited <strong>Rain Catcher</strong> cosmetic!
-        </div>
-        {!claimed ? (
+      <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+        {tabs.map(t => (
           <button
-            onClick={claim}
+            key={t.id}
+            onClick={() => setTab(t.id)}
             style={{
-              width: '100%', background: '#2563eb', color: 'white',
-              border: 'none', borderRadius: 10, padding: '9px',
-              fontSize: 13, fontWeight: 700, cursor: 'pointer',
+              flex: 1, padding: '7px 6px', fontSize: 11.5, fontWeight: 800, borderRadius: 8,
+              border: `1.5px solid ${tab === t.id ? '#059669' : '#e5e7eb'}`,
+              background: tab === t.id ? '#059669' : 'white',
+              color: tab === t.id ? 'white' : '#6b7280', cursor: 'pointer', transition: 'all 0.15s',
             }}
           >
-            🎁 Claim Event Bonus!
+            {t.label}
           </button>
-        ) : (
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#1d4ed8' }}>
-            ✅ Bonus claimed! Harvest a crop before the event ends to earn 2× coins.
-          </div>
-        )}
+        ))}
       </div>
+
+      {tab === 'shop' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'white', border: '1.5px solid #e5e7eb', borderRadius: 12, padding: 12 }}>
+          <span style={{ fontSize: 26 }}>🌻</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>Sunflower Border</div>
+            <div style={{ fontSize: 10, color: '#9ca3af' }}>🪙 50 · Decorates your plot</div>
+          </div>
+          <button
+            onClick={() => { setEquipped(true); markDone(); }}
+            disabled={equipped}
+            style={{
+              background: equipped ? '#16a34a' : '#059669', color: 'white', border: 'none',
+              borderRadius: 8, padding: '7px 12px', fontSize: 11, fontWeight: 700, cursor: equipped ? 'default' : 'pointer',
+            }}
+          >
+            {equipped ? '✓ Equipped' : 'Equip'}
+          </button>
+        </div>
+      )}
+
+      {tab === 'visit' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'white', border: '1.5px solid #e5e7eb', borderRadius: 12, padding: 12 }}>
+          <span style={{ fontSize: 26 }}>🌻</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>Maria F.'s Garden</div>
+            <div style={{ fontSize: 10, color: '#9ca3af' }}>4 crops growing · 42 pts</div>
+          </div>
+          <button
+            onClick={() => { setLeafed(true); markDone(); }}
+            disabled={leafed}
+            style={{
+              background: leafed ? '#16a34a' : '#059669', color: 'white', border: 'none',
+              borderRadius: 8, padding: '7px 12px', fontSize: 11, fontWeight: 700, cursor: leafed ? 'default' : 'pointer',
+            }}
+          >
+            {leafed ? '🍃 Leafed!' : '🍃 Drop a leaf'}
+          </button>
+        </div>
+      )}
+
+      {tab === 'events' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, background: 'white', border: '1.5px solid #e5e7eb', borderRadius: 12, padding: 12 }}>
+          <span style={{ fontSize: 26 }}>🌧️</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>Rainy Season Bonus</div>
+            <div style={{ fontSize: 10, color: '#9ca3af' }}>2× coins on harvest · 7 days left</div>
+          </div>
+          <button
+            onClick={() => { setClaimed(true); markDone(); }}
+            disabled={claimed}
+            style={{
+              background: claimed ? '#16a34a' : '#059669', color: 'white', border: 'none',
+              borderRadius: 8, padding: '7px 12px', fontSize: 11, fontWeight: 700, cursor: claimed ? 'default' : 'pointer',
+            }}
+          >
+            {claimed ? '✓ Claimed' : 'Claim'}
+          </button>
+        </div>
+      )}
+
+      {done && (
+        <div style={{ marginTop: 8, fontSize: 11, fontWeight: 700, color: '#059669' }}>
+          ✅ Nice! Explore the other tabs any time — Shop, Visit, and Events are always open.
+        </div>
+      )}
     </div>
   );
 };
@@ -601,11 +679,12 @@ const FakeSeasonalEvent = ({ onInteract }: { onInteract: () => void }) => {
 // ─── Step type ────────────────────────────────────────────────────────────────
 type InteractiveComponent =
   | 'gardenGrid'
-  | 'coinEarner'
+  | 'plotSelect'
+  | 'cropCare'
   | 'pestAttack'
-  | 'cosmeticsShop'
-  | 'gardenVisit'
-  | 'seasonalEvent'
+  | 'harvest'
+  | 'coinEarner'
+  | 'gardenFeatures'
   | null;
 
 type Step = {
@@ -613,6 +692,7 @@ type Step = {
   title: string;
   body: string;
   tip?: string;
+  seconds: number; // rough reading + interaction time, used for the "time left" indicator
   expression: 'normal' | 'excited' | 'wink' | 'celebrate';
   icon: string;
   bg: string;
@@ -623,11 +703,15 @@ type Step = {
 };
 
 // ─── Steps ────────────────────────────────────────────────────────────────────
+// 9 short steps, ~10s each ≈ 90 seconds total — matches the in-game action names
+// (Plant, Water, Fertilizer, Pesticide, Scarecrow, Decorate) so nothing here feels
+// like a separate lesson from the real Garden screen.
 const STEPS: Step[] = [
   {
     id: 0,
     title: "Welcome to My Garden! 🌻",
-    body: "Hey Farmer, I'm Kool! Your AgriCool garden is a living map of your real crops — but also a game where you defend, grow, and customize your own little farm. Let me walk you through it!",
+    body: "Hey Farmer, I'm Kool! This is a 90-second tour of your garden. I'll show you how to plant, care for, defend, and harvest crops — then how to earn rewards.",
+    seconds: 8,
     expression: 'excited',
     icon: '🌻',
     bg: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
@@ -637,86 +721,107 @@ const STEPS: Step[] = [
   },
   {
     id: 1,
-    title: 'Your Garden Grid 🗺️',
-    body: "Your garden is a 5×5 plot grid. Each plot matches a crop you've queued in the Tracker — they appear automatically! You can also manually arrange and customize the layout however you like.",
-    tip: '💡 Pick a crop from the list and tap an empty plot to place it!',
+    title: '1. Plant a Crop 🌱',
+    body: "Pick a crop, then tap any empty plot to plant it. Your garden is a grid — plots you've queued in the Tracker also appear here automatically.",
+    tip: '💡 In-game, use the 🌱 Plant tool in the toolbar to do this.',
+    seconds: 10,
     expression: 'normal',
-    icon: '🗺️',
+    icon: '🌱',
     bg: 'linear-gradient(135deg, #f0fdf4 0%, #d1fae5 100%)',
     accent: '#059669',
-    xp: 14,
+    xp: 12,
     interactive: 'gardenGrid',
     interactLabel: 'Place a crop on the grid to continue →',
   },
   {
     id: 2,
-    title: 'Earn AgriCoins 🪙',
-    body: "Completing tasks, harvesting crops, and verifying photos all earn you AgriCoins — our garden currency. Coins are separate from your Listing Tokens, so they won't affect your marketplace credits.",
-    tip: '🎯 Click an action below to see how many coins it earns!',
-    expression: 'wink',
-    icon: '🪙',
-    bg: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
-    accent: '#d97706',
-    xp: 28,
-    interactive: 'coinEarner',
-    interactLabel: 'Earn some coins above to continue →',
+    title: '2. Select a Plot 👆',
+    body: "Tap any planted plot to open its info panel — growth stage, time remaining, health, and protection status all show up instantly.",
+    tip: '💡 Selecting a plot is how you check on any crop, any time.',
+    seconds: 8,
+    expression: 'normal',
+    icon: '🔍',
+    bg: 'linear-gradient(135deg, #fefce8 0%, #fef3c7 100%)',
+    accent: '#ca8a04',
+    xp: 24,
+    interactive: 'plotSelect',
+    interactLabel: 'Tap the planted plot to continue →',
   },
   {
     id: 3,
-    title: 'Defend Against Pests! 🐛',
-    body: "Pests randomly attack your crops! They chip away at a crop's health — if a crop hits 0 HP, it wilts. Buy defense items using your AgriCoins: Pesticide for a quick fix, or a Scarecrow that lasts 3 days.",
-    tip: '⚔️ A pest is attacking your Tomato! Try to defend it below.',
+    title: '3. Monitor Crop Health ❤️',
+    body: "Crops track two bars: Growth (how close to harvest) and Health (HP). Water restores health, Fertilizer speeds up growth — try both below!",
+    tip: '💧 Water · 🌿 Fertilize — same tools as the real toolbar.',
+    seconds: 12,
+    expression: 'wink',
+    icon: '❤️',
+    bg: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
+    accent: '#2563eb',
+    xp: 38,
+    interactive: 'cropCare',
+    interactLabel: 'Water or fertilize the crop to continue →',
+  },
+  {
+    id: 4,
+    title: '4. Deal With Pests! 🐛',
+    body: "Pests attack randomly and chip away HP — a crop at 0 HP wilts. Defend with Pesticide (instant) or a Scarecrow (lasts 3 days), or risk ignoring it.",
+    tip: '⚔️ A pest is attacking your Tomato — defend it below!',
+    seconds: 12,
     expression: 'excited',
     icon: '🛡️',
     bg: 'linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%)',
     accent: '#e11d48',
-    xp: 44,
+    xp: 52,
     interactive: 'pestAttack',
     interactLabel: 'Defend your crop to continue →',
   },
   {
-    id: 4,
-    title: 'Customize Your Garden 🎨',
-    body: "Spend your AgriCoins in the Cosmetics Shop! Unlock fences, border flowers, rain catchers, and more. These are purely decorative — they show up on your garden and when other farmers visit you.",
-    tip: '🛒 Browse the shop below and equip something!',
+    id: 5,
+    title: '5. Harvest Your Crop 🌾',
+    body: "Once a crop hits 100% growth, it's harvest-ready — tap Harvest to collect it. You get AgriCoins and XP, and the plot frees up to plant again.",
+    tip: '🌾 This Rice is ready — go ahead and harvest it!',
+    seconds: 8,
+    expression: 'excited',
+    icon: '🌾',
+    bg: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
+    accent: '#d97706',
+    xp: 66,
+    interactive: 'harvest',
+    interactLabel: 'Harvest the crop to continue →',
+  },
+  {
+    id: 6,
+    title: '6. Earn Rewards 🪙',
+    body: "Harvesting is the biggest earner, but tasks and photo verifications pay AgriCoins too. They're separate from Listing Tokens, so your marketplace credits are untouched.",
+    tip: '🎯 Tap an action below to see how many coins it earns.',
+    seconds: 10,
+    expression: 'wink',
+    icon: '🪙',
+    bg: 'linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%)',
+    accent: '#d97706',
+    xp: 80,
+    interactive: 'coinEarner',
+    interactLabel: 'Earn some coins above to continue →',
+  },
+  {
+    id: 7,
+    title: '7. Garden Features 🎨',
+    body: "Spend coins in the Shop on decorations, drop a Leaf on a neighbor's garden to say hi, and check Events for limited-time bonuses like double coins.",
+    tip: '🔀 Switch tabs below and try one action in any of them.',
+    seconds: 12,
     expression: 'normal',
     icon: '🎨',
     bg: 'linear-gradient(135deg, #fdf4ff 0%, #f3e8ff 100%)',
     accent: '#7c3aed',
-    xp: 60,
-    interactive: 'cosmeticsShop',
-    interactLabel: 'Equip a cosmetic to continue →',
+    xp: 92,
+    interactive: 'gardenFeatures',
+    interactLabel: 'Try one feature above to continue →',
   },
   {
-    id: 5,
-    title: "Visit Other Farmers' Gardens 🏡",
-    body: "Click any farmer on the Garden Leaderboard to visit their plot! See what they're growing, what cosmetics they've unlocked, and drop a Leaf (like) to show appreciation. You earn +1 coin per leaf you receive!",
-    tip: '🌿 Visit a neighbor\'s garden below and drop them a leaf!',
-    expression: 'wink',
-    icon: '🏡',
-    bg: 'linear-gradient(135deg, #f0fdf4 0%, #d1fae5 100%)',
-    accent: '#16a34a',
-    xp: 75,
-    interactive: 'gardenVisit',
-    interactLabel: 'Visit a garden and drop a leaf to continue →',
-  },
-  {
-    id: 6,
-    title: 'Seasonal Events 🌧️',
-    body: "The garden runs seasonal events tied to your Almanac data — like a Rainy Season bonus or a Summer Harvest fiesta! Events give you bonus coins, limited cosmetics, and special challenges. Don't miss them!",
-    tip: '🎁 Claim the seasonal bonus below!',
-    expression: 'celebrate',
-    icon: '🌤️',
-    bg: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)',
-    accent: '#2563eb',
-    xp: 88,
-    interactive: 'seasonalEvent',
-    interactLabel: 'Claim the event bonus to continue →',
-  },
-  {
-    id: 7,
+    id: 8,
     title: "Your Garden is Ready! 🚀",
-    body: "That's the full tour! Queue your crops in the Tracker, watch them grow in your Garden, defend against pests, earn coins, and customize your plot. Build the best farm in the leaderboard!",
+    body: "That's the loop: plant → care for → defend → harvest → earn → customize. Jump in and build the best farm on the leaderboard!",
+    seconds: 6,
     expression: 'celebrate',
     icon: '🚀',
     bg: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
@@ -745,6 +850,7 @@ const GardenTutorial = ({ onComplete, onSkip }: GardenTutorialProps) => {
   const isLast              = stepIdx === STEPS.length - 1;
   const isCelebrate         = step.expression === 'celebrate';
   const requiresInteraction = step.interactive !== null && !interacted;
+  const secondsLeft         = STEPS.slice(stepIdx).reduce((sum, s) => sum + s.seconds, 0);
 
   useEffect(() => {
     const target = STEPS[stepIdx].xp;
@@ -944,6 +1050,9 @@ const GardenTutorial = ({ onComplete, onSkip }: GardenTutorialProps) => {
               <span style={{ fontSize: 11, fontWeight: 800, color: step.accent, letterSpacing: 1, textTransform: 'uppercase' }}>
                 Step {stepIdx + 1} of {STEPS.length}
               </span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: step.accent + 'aa' }}>
+                · ⏱ ~{secondsLeft}s left
+              </span>
             </div>
             <button className="gdn-skip" onClick={onSkip}>Skip tutorial</button>
           </div>
@@ -998,12 +1107,13 @@ const GardenTutorial = ({ onComplete, onSkip }: GardenTutorialProps) => {
               )}
 
               {/* Interactive widgets */}
-              {step.interactive === 'gardenGrid'    && <FakeGardenGrid      onInteract={handleInteract} />}
-              {step.interactive === 'coinEarner'    && <FakeCoinEarner      onInteract={handleInteract} />}
-              {step.interactive === 'pestAttack'    && <FakePestAttack      onInteract={handleInteract} />}
-              {step.interactive === 'cosmeticsShop' && <FakeCosmeticsShop   onInteract={handleInteract} />}
-              {step.interactive === 'gardenVisit'   && <FakeGardenVisit     onInteract={handleInteract} />}
-              {step.interactive === 'seasonalEvent' && <FakeSeasonalEvent   onInteract={handleInteract} />}
+              {step.interactive === 'gardenGrid'      && <FakeGardenGrid      onInteract={handleInteract} />}
+              {step.interactive === 'plotSelect'      && <FakePlotSelect      onInteract={handleInteract} />}
+              {step.interactive === 'cropCare'        && <FakeCropCare        onInteract={handleInteract} />}
+              {step.interactive === 'pestAttack'      && <FakePestAttack      onInteract={handleInteract} />}
+              {step.interactive === 'harvest'         && <FakeHarvest         onInteract={handleInteract} />}
+              {step.interactive === 'coinEarner'      && <FakeCoinEarner      onInteract={handleInteract} />}
+              {step.interactive === 'gardenFeatures'  && <FakeGardenFeatures  onInteract={handleInteract} />}
 
               {/* Interaction nudge */}
               {requiresInteraction && step.interactLabel && (
