@@ -1,7 +1,8 @@
 import { motion } from 'framer-motion';
-import { Link } from 'react-router-dom';
 import { SEASONAL_EVENTS } from '../constants';
 import { daysLeft, getCurrentSeason, getTodaysWeather, dayOfYear } from '../helpers';
+import NotificationBell from './NotificationBell';
+import { GardenNotification } from '../notifications/types';
 
 interface TopHUDProps {
   username: string;
@@ -11,11 +12,15 @@ interface TopHUDProps {
   level: { level: number; title: string; icon: string; color: string };
   progress: { current: number; needed: number; pct: number };
   pestCount: number;
-  claimableEvents: number;
+  notifications: GardenNotification[];
+  unreadNotifications: number;
+  onSelectNotification: (notification: GardenNotification) => void;
+  onMarkAllNotificationsRead: () => void;
 }
 
 export default function TopHUD({
-  username, avatarUrl, coins, level, progress, pestCount, claimableEvents,
+  username, avatarUrl, coins, level, progress, pestCount,
+  notifications, unreadNotifications, onSelectNotification, onMarkAllNotificationsRead,
 }: TopHUDProps) {
   const season = getCurrentSeason();
   const weather = getTodaysWeather();
@@ -88,18 +93,12 @@ export default function TopHUD({
             </span>
           )}
 
-          <Link
-            to="/notifications"
-            className="relative flex h-9 w-9 items-center justify-center rounded-full border border-garden-100 bg-white text-base shadow-panel transition hover:-translate-y-0.5 hover:shadow-glass"
-            title="Notifications"
-          >
-            🔔
-            {claimableEvents > 0 && (
-              <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
-                {claimableEvents}
-              </span>
-            )}
-          </Link>
+          <NotificationBell
+            notifications={notifications}
+            unreadCount={unreadNotifications}
+            onSelect={onSelectNotification}
+            onMarkAllRead={onMarkAllNotificationsRead}
+          />
         </div>
       </div>
     </div>

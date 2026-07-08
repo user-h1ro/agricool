@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/supabase';
 import { useAuth } from '@/context/AuthProvider';
 import GardenTutorial from './GardenTutorial';
@@ -20,12 +21,14 @@ import Toast from './components/Toast';
 
 import { useFarmerLevel } from './hooks/useFarmerLevel';
 import { useProfile } from './hooks/useProfile';
+import { useGardenNotifications } from './hooks/useGardenNotifications';
+import { GardenNotification } from './notifications/types';
 
 import {
   COIN_REWARDS, DEFENSE_ITEMS, COSMETICS, SEASONAL_EVENTS, PESTS, DAILY_QUEST_DEFS,
 } from './constants';
 import {
-  emptyGrid, emptyPlot, dbRowToState, stateToDbRow, dispatchCoinEvent,
+  emptyGrid, emptyPlot, dbRowToState, stateToDbRow, dispatchCoinEvent, getTodaysWeather,
 } from './helpers';
 import {
   Cosmetic, DailyQuest, DailyQuestId, GardenState, LeaderboardRow, PestEvent,
@@ -78,6 +81,22 @@ const Garden = () => {
 
   const profile = useProfile(user?.id, user?.email);
   const { xp, level, progress: xpProgress } = useFarmerLevel(user?.id);
+  const navigate = useNavigate();
+
+  // Doesn't depend on gardenState, so it's safe to compute before the
+  // loading guard below — needed there by useGardenNotifications.
+  const dailyQuests: DailyQuest[] = DAILY_QUEST_DEFS.map(def => ({ ...def, progress: questProgress[def.id] ?? 0 }));
+
+  const {
+    notifications, unreadCount, markRead, markAllRead,
+  } = useGardenNotifications({
+    userId: user?.id,
+    layout: gardenState?.layout ?? [],
+    activePests: gardenState?.activePests ?? [],
+    weatherLabel: getTodaysWeather().label,
+    dailyQuests,
+    level: level.level,
+  });
 
   // ── Load ──
   const loadData = useCallback(async () => {
@@ -446,9 +465,22 @@ const Garden = () => {
   const availableCropsToPlant = trackedCrops.filter(c => c.status !== 'wilted' && !plantedCropIds.has(c.id));
   const showPlantOnboarding = !plantOnboardingSeen && gardenState.layout.every(p => !p.cropId) && trackedCrops.length > 0;
 
-  const dailyQuests: DailyQuest[] = DAILY_QUEST_DEFS.map(def => ({ ...def, progress: questProgress[def.id] ?? 0 }));
   const questsClaimable = dailyQuests.filter(q => q.progress >= q.target && !claimedQuests.includes(q.id)).length;
   const eventsClaimable = SEASONAL_EVENTS.filter(ev => !gardenState.claimedEvents.includes(ev.id)).length;
+
+  // Notification click -> mark read, then follow wherever it points. This
+  // never touches game state itself, only navigation/selection.
+  const handleSelectNotification = (n: GardenNotification) => {
+    markRead(n.id);
+    if (n.link.kind === 'plot') {
+      setSelectedPlot(n.link.plotIndex);
+    } else if (n.link.kind === 'quests') {
+      setBottomTab(0);
+      document.getElementById('garden-bottom-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (n.link.kind === 'route') {
+      navigate(n.link.path);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-[1400px] px-3 py-4 sm:px-5 sm:py-6">
@@ -504,7 +536,10 @@ const Garden = () => {
         level={level}
         progress={xpProgress}
         pestCount={gardenState.activePests.length}
-        claimableEvents={eventsClaimable}
+        notifications={notifications}
+        unreadNotifications={unreadCount}
+        onSelectNotification={handleSelectNotification}
+        onMarkAllNotificationsRead={markAllRead}
       />
 
       {gardenState.equippedCosmetics.length > 0 && (
@@ -562,28 +597,30 @@ const Garden = () => {
         </div>
       </div>
 
-      <BottomPanel
-        activeTab={bottomTab}
-        onChangeTab={setBottomTab}
-        questsBadge={questsClaimable}
-        eventsBadge={eventsClaimable}
-      >
-        {tab => {
-          if (tab === 0) return <QuestsTab quests={dailyQuests} onClaim={handleClaimQuest} claimed={claimedQuests} />;
-          if (tab === 1) return <EventsTab claimedEvents={gardenState.claimedEvents} onClaim={handleClaimEvent} />;
-          if (tab === 2) return (
-            <SocialTab
-              currentUserId={user.id}
-              leafCount={gardenState.leafCount}
-              equippedCosmeticsCount={gardenState.equippedCosmetics.length}
-              rows={leaderboardRows}
-              loading={leaderboardLoading}
-              onVisit={setVisitingRow}
-            />
-          );
-          return <LeaderboardTab currentUserId={user.id} rows={leaderboardRows} loading={leaderboardLoading} onVisit={setVisitingRow} />;
-        }}
-      </BottomPanel>
+      <div id="garden-bottom-panel">
+        <BottomPanel
+          activeTab={bottomTab}
+          onChangeTab={setBottomTab}
+          questsBadge={questsClaimable}
+          eventsBadge={eventsClaimable}
+        >
+          {tab => {
+            if (tab === 0) return <QuestsTab quests={dailyQuests} onClaim={handleClaimQuest} claimed={claimedQuests} />;
+            if (tab === 1) return <EventsTab claimedEvents={gardenState.claimedEvents} onClaim={handleClaimEvent} />;
+            if (tab === 2) return (
+              <SocialTab
+                currentUserId={user.id}
+                leafCount={gardenState.leafCount}
+                equippedCosmeticsCount={gardenState.equippedCosmetics.length}
+                rows={leaderboardRows}
+                loading={leaderboardLoading}
+                onVisit={setVisitingRow}
+              />
+            );
+            return <LeaderboardTab currentUserId={user.id} rows={leaderboardRows} loading={leaderboardLoading} onVisit={setVisitingRow} />;
+          }}
+        </BottomPanel>
+      </div>
 
       <div className="mt-4 flex justify-end">
         <button
