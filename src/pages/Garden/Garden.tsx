@@ -546,6 +546,8 @@ const Garden = () => {
             selectedPlot={selectedPlot}
             plot={selectedPlotData}
             pest={selectedPest}
+            layout={gardenState.layout}
+            activePests={gardenState.activePests}
             trackedCrops={availableCropsToPlant}
             hasAnyTrackedCrops={trackedCrops.length > 0}
             onClose={() => setSelectedPlot(null)}

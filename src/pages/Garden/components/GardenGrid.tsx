@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { GardenLayout, PestEvent, ToolId, TrackedCrop } from '../types';
 import { COLS, ROWS } from '../constants';
 import { ISO_TILE_W, ISO_TILE_H, isoProject, plotColIdx, getTodaysWeather } from '../helpers';
-import { CropPlant, getCropKind, getGrowthStage } from './CropPlant';
+import { CropPlant, getGrowthStage } from './CropPlant';
 import {
   Tree, Shed, FenceSection, Scarecrow, FlowerBed, TransientButterflies,
   LogPile, Barrel, RockCluster, Shrub, Windmill, Barn,
@@ -620,7 +620,6 @@ function Tile({
   if (isSelected) fillOpacity = 0.82;
 
   const elevateY = isSelected ? -7 : 0;
-  const cropKind = isEmpty ? null : getCropKind(plot.emoji);
   const growthStage = isEmpty ? 0 : getGrowthStage(plot.status, idx);
 
   return (
@@ -702,9 +701,9 @@ function Tile({
       {/* Plant — grown INTO the soil bed, not floating above it. Rendered as
           a small cluster of individually-shaped plant units so the plot
           reads as "a tomato patch", not "a square with a tomato icon". */}
-      {!isEmpty && cropKind && (
+      {!isEmpty && (
         <CropPlant
-          kind={cropKind}
+          cropName={plot.name}
           tx={tx}
           ty={ty}
           halfW={half_w}

@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthProvider';
 import { useRevenue } from '@/context/RevenueProvider';
 import { ALMANAC_CROPS } from '@/pages/Almanac/data';
 import GamifiedTutorial from './GamifiedTutorial';
+import { QueueCropModal } from './QueueCropModal';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type CropStatus = 'healthy' | 'wilted' | 'growing' | 'harvest_ready';
@@ -570,136 +571,11 @@ function markReminderTransferred(userId: string, key: string) {
 }
 
 // ─── Add Crop Modal ───────────────────────────────────────────────────────────
-const AddCropModal = ({
-  onAdd,
-  onClose,
-}: {
-  onAdd: (crop: { name: string; emoji: string; initial_day: number }) => Promise<void>;
-  onClose: () => void;
-}) => {
-  const [selected, setSelected] = useState(CROP_OPTIONS[0]);
-  const [initialDay, setInitialDay] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const seasonalWarning = getSeasonalWarning(selected.name);
-
-  const handleAdd = async () => {
-    if (initialDay > 10) {
-      setError('Max initial day is 10. Crops older than 10 days cannot be queued.');
-      return;
-    }
-    setError('');
-    setLoading(true);
-    await onAdd({ name: selected.name, emoji: selected.emoji, initial_day: initialDay });
-    setLoading(false);
-    onClose();
-  };
-
-  return (
-    <Box
-      position="fixed" inset={0} zIndex={1000}
-      bg="rgba(0,0,0,0.55)"
-      display="flex" alignItems="center" justifyContent="center"
-      onClick={onClose}
-    >
-      <Box
-        bg="white" borderRadius="24px" p={7} w="360px"
-        boxShadow="0 24px 64px rgba(0,0,0,0.22)"
-        onClick={e => e.stopPropagation()}
-        maxH="90vh" overflowY="auto"
-      >
-        <Text fontWeight="900" fontSize="xl" mb={1} color="#14532d" letterSpacing="-0.5px">
-          🌱 Queue a New Crop
-        </Text>
-        <Text fontSize="xs" color="gray.400" mb={5}>
-          Timeline locks once you hit Start — progress is permanent.
-        </Text>
-
-        {/* Seasonal warning */}
-        {seasonalWarning && (
-          <Box bg="#fef3c7" border="1px solid #fde68a" borderRadius="10px" px={3} py={2} mb={4}>
-            <Text fontSize="11px" color="#92400e" fontWeight="700">{seasonalWarning}</Text>
-          </Box>
-        )}
-
-        <Text fontSize="xs" fontWeight="800" color="gray.500" textTransform="uppercase" letterSpacing="wider" mb={2}>
-          Select Crop
-        </Text>
-        <Box display="grid" gridTemplateColumns="repeat(5, 1fr)" gap={2} mb={5}>
-          {CROP_OPTIONS.map(opt => {
-            const warning = getSeasonalWarning(opt.name);
-            return (
-              <Box
-                key={opt.name}
-                textAlign="center" p={2} borderRadius="12px" cursor="pointer"
-                border="2px solid"
-                borderColor={selected.name === opt.name ? '#16a34a' : '#f3f4f6'}
-                bg={selected.name === opt.name ? '#f0fdf4' : 'white'}
-                transition="all 0.15s"
-                onClick={() => setSelected(opt)}
-                position="relative"
-              >
-                <Text fontSize="xl">{opt.emoji}</Text>
-                <Text fontSize="9px" fontWeight="700" color="gray.400" mt={0.5}>{opt.name}</Text>
-                {warning && (
-                  <Box position="absolute" top="2px" right="2px" fontSize="8px" title={warning}>⚠️</Box>
-                )}
-              </Box>
-            );
-          })}
-        </Box>
-
-        <Text fontSize="xs" fontWeight="800" color="gray.500" textTransform="uppercase" letterSpacing="wider" mb={1}>
-          Days already planted (0–10)
-        </Text>
-        <Text fontSize="11px" color="gray.400" mb={2}>
-          If your crop is already in the ground, how many days has it been? Max: 10.
-        </Text>
-        <HStack mb={1}>
-          <Input
-            type="number" min={0} max={10}
-            value={initialDay}
-            onChange={e => setInitialDay(Math.min(10, Math.max(0, Number(e.target.value))))}
-            borderRadius="10px" size="sm" w="80px"
-            borderColor="#d1fae5" fontWeight="700" color="#14532d"
-          />
-          <Box flex={1} bg="#f0fdf4" borderRadius="8px" px={3} py={1.5}>
-            <Box h="6px" borderRadius="full" bg="#d1fae5" overflow="hidden">
-              <Box
-                h="100%" borderRadius="full"
-                bg="linear-gradient(90deg,#4ade80,#16a34a)"
-                w={`${(initialDay / 10) * 100}%`}
-                transition="width 0.3s"
-              />
-            </Box>
-            <Text fontSize="10px" color="#16a34a" fontWeight="700" mt={1}>
-              Starting at {formatDay(initialDay)}
-            </Text>
-          </Box>
-        </HStack>
-
-        {error && (
-          <Box bg="#fee2e2" borderRadius="8px" px={3} py={2} mb={3}>
-            <Text fontSize="12px" color="#ef4444" fontWeight="700">{error}</Text>
-          </Box>
-        )}
-
-        <HStack gap={2} mt={5}>
-          <Button flex={1} variant="outline" borderRadius="12px" onClick={onClose} size="sm" color="gray.500">
-            Cancel
-          </Button>
-          <Button
-            flex={2} bg="#16a34a" color="white" borderRadius="12px"
-            fontWeight="800" _hover={{ bg: '#15803d' }} size="sm"
-            onClick={handleAdd} loading={loading}
-          >
-            🚀 Lock & Start
-          </Button>
-        </HStack>
-      </Box>
-    </Box>
-  );
-};
+// The full gamified crop tracker UI now lives in ./QueueCropModal.tsx, which is
+// data-driven from ./cropConfig.ts. It's used directly below (see `showAddCrop`)
+// and calls `onAdd({ name, emoji, initial_day })` — the exact same shape the
+// old inline modal used — so handleAddCrop and the tracked_crops insert are
+// completely unchanged.
 
 // ─── Photo Verification Modal ─────────────────────────────────────────────────
 const VerifyModal = ({
@@ -2953,7 +2829,15 @@ const GamifiedDashboard = () => {
       )}
 
       {showTutorial && <GamifiedTutorial onComplete={handleTutorialDone} onSkip={handleTutorialDone} />}
-      {showAddCrop && <AddCropModal onAdd={handleAddCrop} onClose={() => setShowAddCrop(false)} />}
+      {showAddCrop && (
+        <QueueCropModal
+          onAdd={handleAddCrop}
+          onClose={() => setShowAddCrop(false)}
+          now={now}
+          farmerLevel={getFarmerLevel(farmerXP).level}
+          userId={user?.id}
+        />
+      )}
       {verifyingCrop && (
         <VerifyModal
           crop={verifyingCrop}
