@@ -1,9 +1,10 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 interface BottomPanelProps {
   questsBadge?: number;
   eventsBadge?: number;
+  goalsBadge?: number;
   children: (activeTab: number) => ReactNode;
   activeTab: number;
   onChangeTab: (tab: number) => void;
@@ -14,14 +15,18 @@ const TABS = [
   { label: 'Events', icon: '🌤️' },
   { label: 'Social', icon: '🍃' },
   { label: 'Leaderboard', icon: '🏆' },
+  { label: 'Calendar', icon: '📅' },
+  { label: 'Insights', icon: '💡' },
+  { label: 'History', icon: '📜' },
+  { label: 'Goals', icon: '🎯' },
 ];
 
-export default function BottomPanel({ questsBadge, eventsBadge, children, activeTab, onChangeTab }: BottomPanelProps) {
+export default function BottomPanel({ questsBadge, eventsBadge, goalsBadge, children, activeTab, onChangeTab }: BottomPanelProps) {
   return (
     <div className="mt-4 rounded-2xl border border-white/60 bg-white/75 p-3 shadow-glass backdrop-blur-md sm:p-4">
       <div className="mb-4 flex gap-1 overflow-x-auto rounded-xl bg-garden-50 p-1">
         {TABS.map((tab, i) => {
-          const badge = i === 0 ? questsBadge : i === 1 ? eventsBadge : undefined;
+          const badge = i === 0 ? questsBadge : i === 1 ? eventsBadge : i === 7 ? goalsBadge : undefined;
           const active = activeTab === i;
           return (
             <button

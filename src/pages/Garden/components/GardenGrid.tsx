@@ -4,6 +4,7 @@ import { GardenLayout, PestEvent, ToolId, TrackedCrop } from '../types';
 import { COLS, ROWS } from '../constants';
 import { ISO_TILE_W, ISO_TILE_H, isoProject, plotColIdx, getTodaysWeather } from '../helpers';
 import { CropPlant, getGrowthStage } from './CropPlant';
+import { CropFilterId, plotMatchesFilters } from './dashboard/dashboardHelpers';
 import {
   Tree, Shed, FenceSection, Scarecrow, FlowerBed, TransientButterflies,
   LogPile, Barrel, RockCluster, Shrub, Windmill, Barn,
@@ -253,9 +254,11 @@ function PathRibbon({ d, width }: { d: string; width: number }) {
 
 export default function GardenGrid({
   layout, activePests, equippedCosmetics, selectedPlot, onSelectPlot, activeTool, onToolApply,
+  statusFilter = null, cropTypeFilter = null,
 }: GardenGridProps) {
   const [hoveredPlot, setHoveredPlot] = useState<number | null>(null);
   const weather = useMemo(() => getTodaysWeather(), []);
+  const isFilterActive = !!statusFilter || !!cropTypeFilter;
 
   const renderOrder = useMemo(
     () => Array.from({ length: COLS * ROWS }, (_, i) => {
@@ -451,6 +454,8 @@ export default function GardenGrid({
               isHovered={hoveredPlot === idx}
               isLastRow={row === ROWS - 1}
               allEmpty={idx === 12 && layout.every(p => !p.cropId)}
+              isFilterActive={isFilterActive}
+              isFilterMatch={isFilterActive && plotMatchesFilters(layout[idx], activePests.some(p => p.plotIdx === idx), statusFilter, cropTypeFilter)}
               onClick={() => handleTileClick(idx)}
               onEnter={() => setHoveredPlot(idx)}
               onLeave={() => setHoveredPlot(null)}
@@ -486,6 +491,12 @@ interface GardenGridProps {
   // and clear plantingCrop") and I'll wire it up properly instead of guessing.
   plantingCrop?: TrackedCrop | null;
   onCancelPlanting?: () => void;
+  // Phase 3, item 8 — Search & Filter. When either is set, non-matching
+  // plots dim and matching plots get a highlight ring (see Tile below).
+  // Both default to "no constraint" so every existing caller keeps working
+  // unchanged.
+  statusFilter?: CropFilterId | null;
+  cropTypeFilter?: string | null;
 }
 
 // ─── The crop bed — four distinct beds, one continuous piece of ground ────
@@ -569,11 +580,12 @@ function TerrainMound() {
 // ─── Single crop tile ───────────────────────────────────────────────────────
 
 function Tile({
-  idx, col, row, plot, pest, isSelected, isHovered, isLastRow, allEmpty, onClick, onEnter, onLeave,
+  idx, col, row, plot, pest, isSelected, isHovered, isLastRow, allEmpty, isFilterActive, isFilterMatch, onClick, onEnter, onLeave,
 }: {
   idx: number; col: number; row: number;
   plot: GardenLayout[number]; pest: PestEvent | null;
   isSelected: boolean; isHovered: boolean; isLastRow: boolean; allEmpty: boolean;
+  isFilterActive: boolean; isFilterMatch: boolean;
   onClick: () => void; onEnter: () => void; onLeave: () => void;
 }) {
   const { x: cx, y: cy } = isoProject(col, row);
@@ -626,7 +638,7 @@ function Tile({
     <motion.g
       style={{ cursor: 'pointer', transformOrigin: `${tx}px ${ty}px` }}
       whileTap={{ scale: 1.08 }}
-      animate={{ y: elevateY }}
+      animate={{ y: elevateY, opacity: isFilterActive && !isFilterMatch ? 0.3 : 1 }}
       transition={{ duration: 0.2 }}
       onClick={onClick}
       onMouseEnter={onEnter}
@@ -696,6 +708,12 @@ function Tile({
       {isProtected && !hasPest && (
         <motion.ellipse cx={tx} cy={ty} rx={half_w * 0.62} ry={half_h * 0.62} fill="none" stroke="#60a5fa" strokeWidth={1.5}
           animate={{ opacity: [0.25, 0.6, 0.25] }} transition={{ duration: 2, repeat: Infinity }} />
+      )}
+
+      {/* Phase 3, item 8 — Search & Filter match ring */}
+      {isFilterMatch && (
+        <motion.ellipse cx={tx} cy={ty} rx={half_w * 0.78} ry={half_h * 0.78} fill="none" stroke="#22d3ee" strokeWidth={2.5}
+          animate={{ opacity: [0.5, 1, 0.5] }} transition={{ duration: 1.3, repeat: Infinity }} />
       )}
 
       {/* Plant — grown INTO the soil bed, not floating above it. Rendered as

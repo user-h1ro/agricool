@@ -1,12 +1,13 @@
 import { getCropConfig, getSeasonInfo } from '@/pages/GamifiedDashboard/cropConfig';
-import { getCurrentSeason } from '../../helpers';
+import { getCurrentSeason, getPlotHistory } from '../../helpers';
 import { PestEvent, PlotCrop } from '../../types';
 import {
-  computeGrowthInfo, computeHealthInfo, computeWaterInfo, computePestInfo, computeHarvestEstimate,
+  computeGrowthInfo, computeHealthInfo, computeWaterInfo, computeNutritionInfo,
+  computePestRiskInfo, computeGrowthSpeedInfo, computePestInfo, computeHarvestEstimate,
+  computeLifecycleTimeline,
 } from './dashboardHelpers';
 import GrowthTimeline from './GrowthTimeline';
 import CropHealthCard from './CropHealthCard';
-import WaterStatusCard from './WaterStatusCard';
 import PestStatusCard from './PestStatusCard';
 import HarvestRewardsCard from './HarvestRewardsCard';
 import PlotActions from './PlotActions';
@@ -41,8 +42,13 @@ export default function CropDashboard({
   const growth = computeGrowthInfo(plot, plotIndex, crop);
   const health = computeHealthInfo(plot, !!pest, seasonInfo);
   const water = computeWaterInfo(plot, !!pest);
+  const nutrition = computeNutritionInfo(plot);
+  const pestRisk = computePestRiskInfo(plot, !!pest, crop);
+  const growthSpeed = computeGrowthSpeedInfo(plot, seasonInfo);
   const pestInfo = computePestInfo(pest, crop);
   const harvest = computeHarvestEstimate(crop, seasonInfo, health.score);
+  const lifecycleStages = computeLifecycleTimeline(growth);
+  const history = getPlotHistory(plot);
 
   const protectionLabel = plot.defenseItem
     ? `${plot.defenseItem === 'scarecrow' ? '🧱 Scarecrow' : '🪲 Pesticide'} active`
@@ -76,7 +82,7 @@ export default function CropDashboard({
         </div>
       </div>
 
-      <GrowthTimeline stageIndex={growth.stageIndex} progressPct={growth.progressPct} harvestEmoji={plot.emoji} />
+      <GrowthTimeline stages={lifecycleStages} progressPct={growth.progressPct} harvestEmoji={plot.emoji} />
 
       {/* Season row */}
       <div className="flex items-center justify-between rounded-xl border border-garden-100 bg-white px-3 py-2">
@@ -88,10 +94,10 @@ export default function CropDashboard({
         )}
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
-        <CropHealthCard score={health.score} tier={health.tier} color={health.color} />
-        <WaterStatusCard pct={water.pct} isEstimate={water.isEstimate} />
-      </div>
+      <CropHealthCard
+        score={health.score} tier={health.tier} color={health.color}
+        water={water.pct} nutrition={nutrition.pct} pestRisk={pestRisk.pct} growthSpeed={growthSpeed.pct}
+      />
 
       <PestStatusCard tier={pestInfo.tier} color={pestInfo.color} label={pestInfo.label} protection={protectionLabel} />
 
@@ -102,6 +108,31 @@ export default function CropDashboard({
         bonusPct={harvest.bonusPct}
         seasonLabel={seasonInfo?.label}
       />
+
+      {/* This planting's real record (Phase 3) — hidden gracefully for
+          crops planted before this shipped, since their history is unknown
+          rather than zero. */}
+      {history.plantedAt && (
+        <div className="rounded-xl border border-garden-100 bg-white p-3">
+          <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-garden-500">📋 This Planting</p>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div>
+              <p className="text-xs font-extrabold text-garden-800">
+                {new Date(history.plantedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+              </p>
+              <p className="text-[9px] font-bold uppercase tracking-wide text-garden-500">Planted</p>
+            </div>
+            <div>
+              <p className="text-xs font-extrabold text-sky-700">💧 {history.waterCount}</p>
+              <p className="text-[9px] font-bold uppercase tracking-wide text-garden-500">Watered</p>
+            </div>
+            <div>
+              <p className="text-xs font-extrabold text-red-600">🐛 {history.pestCount}</p>
+              <p className="text-[9px] font-bold uppercase tracking-wide text-garden-500">Attacks</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Description + gameplay tip */}
       <div className="rounded-xl border border-garden-100 bg-white p-3">

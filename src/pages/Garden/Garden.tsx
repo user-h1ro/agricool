@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/supabase';
 import { useAuth } from '@/context/AuthProvider';
 import GardenTutorial from './GardenTutorial';
@@ -9,10 +8,15 @@ import LeftToolbar from './components/LeftToolbar';
 import GardenGrid from './components/GardenGrid';
 import RightPanel from './components/RightPanel';
 import BottomPanel from './components/BottomPanel';
+import CropSearchFilter from './components/CropSearchFilter';
 import QuestsTab from './components/tabs/QuestsTab';
 import EventsTab from './components/tabs/EventsTab';
 import SocialTab from './components/tabs/SocialTab';
 import LeaderboardTab from './components/tabs/LeaderboardTab';
+import FarmCalendarTab from './components/tabs/FarmCalendarTab';
+import GardenInsightsTab from './components/tabs/GardenInsightsTab';
+import CropHistoryTab from './components/tabs/CropHistoryTab';
+import FarmGoalsTab from './components/tabs/FarmGoalsTab';
 import ShopPanel from './components/ShopPanel';
 import InventoryPanel from './components/InventoryPanel';
 import PlantMenu from './components/PlantMenu';
@@ -24,16 +28,26 @@ import { useProfile } from './hooks/useProfile';
 import { useGardenNotifications } from './hooks/useGardenNotifications';
 import { GardenNotification } from './notifications/types';
 
+import { getCropConfig, getSeasonInfo } from '@/pages/GamifiedDashboard/cropConfig';
 import {
   COIN_REWARDS, DEFENSE_ITEMS, COSMETICS, SEASONAL_EVENTS, PESTS, DAILY_QUEST_DEFS,
 } from './constants';
 import {
-  emptyGrid, emptyPlot, dbRowToState, stateToDbRow, dispatchCoinEvent, getTodaysWeather,
+  emptyGrid, emptyPlot, dbRowToState, stateToDbRow, dispatchCoinEvent,
+  freshPlotHistory, getPlotHistory, getTodaysWeather,
 } from './helpers';
 import {
   Cosmetic, DailyQuest, DailyQuestId, GardenState, LeaderboardRow, PestEvent,
   SeasonalEvent, ToolId, TrackedCrop,
 } from './types';
+import {
+  computeFarmEvents, computeSmartRecommendations, computeGardenInsights,
+  computeHealthInfo, computeHarvestEstimate, computeAverageHealthPct, plotMatchesFilters, CropFilterId,
+} from './components/dashboard/dashboardHelpers';
+import { loadCropHistory, pushCropHistoryEntry, computeLifetimeStats } from './components/dashboard/cropHistoryLog';
+import {
+  loadWeeklyCounters, bumpWeeklyCounter, markWeeklyGoalsClaimed, computeWeeklyGoals, WEEKLY_GOAL_REWARD,
+} from './components/dashboard/weeklyGoals';
 
 // ── Daily quest local persistence ──────────────────────────────────────────
 function todayKey() { return new Date().toISOString().slice(0, 10); }
@@ -66,6 +80,10 @@ const Garden = () => {
   const [openPanel, setOpenPanel] = useState<'shop' | 'decor' | 'inventory' | null>(null);
   const [bottomTab, setBottomTab] = useState(0);
 
+  // Phase 3, item 8 — Search & Filter (grid highlight, not gameplay state)
+  const [statusFilter, setStatusFilter] = useState<CropFilterId | null>(null);
+  const [cropTypeFilter, setCropTypeFilter] = useState<string | null>(null);
+
   // Planting flow: choose a seed first, then tap an empty plot to place it
   const [showPlantMenu, setShowPlantMenu] = useState(false);
   const [plantingCrop, setPlantingCrop] = useState<TrackedCrop | null>(null);
@@ -81,22 +99,24 @@ const Garden = () => {
 
   const profile = useProfile(user?.id, user?.email);
   const { xp, level, progress: xpProgress } = useFarmerLevel(user?.id);
-  const navigate = useNavigate();
 
-  // Doesn't depend on gardenState, so it's safe to compute before the
-  // loading guard below — needed there by useGardenNotifications.
-  const dailyQuests: DailyQuest[] = DAILY_QUEST_DEFS.map(def => ({ ...def, progress: questProgress[def.id] ?? 0 }));
-
+  // Notification bell (top HUD) — derives from garden state transitions.
+  const notificationsDailyQuests: DailyQuest[] = DAILY_QUEST_DEFS.map(def => ({
+    ...def, progress: questProgress[def.id] ?? 0,
+  }));
   const {
-    notifications, unreadCount, markRead, markAllRead,
+    notifications, unreadCount: unreadNotifications, markRead, markAllRead: onMarkAllNotificationsRead,
   } = useGardenNotifications({
     userId: user?.id,
     layout: gardenState?.layout ?? [],
     activePests: gardenState?.activePests ?? [],
     weatherLabel: getTodaysWeather().label,
-    dailyQuests,
+    dailyQuests: notificationsDailyQuests,
     level: level.level,
   });
+  const onSelectNotification = useCallback((notification: GardenNotification) => {
+    markRead(notification.id);
+  }, [markRead]);
 
   // ── Load ──
   const loadData = useCallback(async () => {
@@ -123,7 +143,10 @@ const Garden = () => {
       if (occupiedIds.has(crop.id)) continue;
       const emptyIdx = newLayout.findIndex(p => !p.cropId);
       if (emptyIdx === -1) break;
-      newLayout[emptyIdx] = { cropId: crop.id, name: crop.name, emoji: crop.emoji, status: crop.status, hp: 3, defenseItem: null, defenseExpiresAt: null };
+      newLayout[emptyIdx] = {
+        cropId: crop.id, name: crop.name, emoji: crop.emoji, status: crop.status, hp: 3,
+        defenseItem: null, defenseExpiresAt: null, history: freshPlotHistory(),
+      };
       changed = true;
     }
 
@@ -229,7 +252,10 @@ const Garden = () => {
   const handlePlaceCrop = (plotIdx: number, crop: TrackedCrop) => {
     if (!gardenState) return;
     const layout = [...gardenState.layout];
-    layout[plotIdx] = { cropId: crop.id, name: crop.name, emoji: crop.emoji, status: crop.status, hp: 3, defenseItem: null, defenseExpiresAt: null };
+    layout[plotIdx] = {
+      cropId: crop.id, name: crop.name, emoji: crop.emoji, status: crop.status, hp: 3,
+      defenseItem: null, defenseExpiresAt: null, history: freshPlotHistory(),
+    };
     update({ layout });
     showToast(`🌱 ${crop.name} planted!`);
   };
@@ -260,19 +286,45 @@ const Garden = () => {
   };
 
   const handleRemoveCrop = (plotIdx: number) => {
-    if (!gardenState) return;
+    if (!gardenState || !user) return;
+    const plot = gardenState.layout[plotIdx];
+    if (plot.cropId) {
+      const history = getPlotHistory(plot);
+      pushCropHistoryEntry(user.id, {
+        plotIndex: plotIdx, name: plot.name, emoji: plot.emoji, plantedAt: history.plantedAt,
+        endedAt: Date.now(), outcome: 'removed',
+        waterCount: history.waterCount, fertilizeCount: history.fertilizeCount, pestCount: history.pestCount,
+        coins: 0, estXp: 0,
+      });
+    }
     const layout = [...gardenState.layout];
     layout[plotIdx] = emptyPlot();
     update({ layout });
   };
 
   const handleHarvest = (plotIdx: number) => {
-    if (!gardenState) return;
+    if (!gardenState || !user) return;
     const plot = gardenState.layout[plotIdx];
     if (plot.status !== 'harvest_ready') return;
+
+    const history = getPlotHistory(plot);
+    const crop = getCropConfig(plot.name);
+    const seasonInfo = crop ? getSeasonInfo(crop, new Date().getMonth()) : undefined;
+    const hasPest = gardenState.activePests.some(p => p.plotIdx === plotIdx);
+    const estXp = computeHarvestEstimate(crop, seasonInfo, computeHealthInfo(plot, hasPest, seasonInfo).score).xp;
+
     const layout = [...gardenState.layout];
     layout[plotIdx] = emptyPlot();
     const bonus = gardenState.claimedEvents.includes('rainy_season') ? COIN_REWARDS.harvest * 2 : COIN_REWARDS.harvest;
+
+    pushCropHistoryEntry(user.id, {
+      plotIndex: plotIdx, name: plot.name, emoji: plot.emoji, plantedAt: history.plantedAt,
+      endedAt: Date.now(), outcome: 'harvested',
+      waterCount: history.waterCount, fertilizeCount: history.fertilizeCount, pestCount: history.pestCount,
+      coins: bonus, estXp,
+    });
+    bumpWeeklyCounter(user.id, 'harvestsThisWeek');
+
     update({ layout, coins: gardenState.coins + bonus });
     showToast(`🌾 Harvested ${plot.name}! +${bonus} 🪙`);
     bumpQuest('harvest');
@@ -280,23 +332,30 @@ const Garden = () => {
   };
 
   const handleWater = (plotIdx: number) => {
-    if (!gardenState) return;
+    if (!gardenState || !user) return;
     const plot = gardenState.layout[plotIdx];
     if (!plot.cropId) { showToast('💧 Nothing to water here yet.'); return; }
+    const history = getPlotHistory(plot);
     const layout = [...gardenState.layout];
-    layout[plotIdx] = { ...plot, hp: Math.min(3, plot.hp + 1) };
+    layout[plotIdx] = {
+      ...plot, hp: Math.min(3, plot.hp + 1),
+      history: { ...history, waterCount: history.waterCount + 1, lastWateredAt: Date.now() },
+    };
     update({ layout });
     showToast('💧 Watered! HP restored.');
     bumpQuest('water');
+    bumpWeeklyCounter(user.id, 'waterActionsThisWeek');
   };
 
   const handleFertilize = (plotIdx: number) => {
     if (!gardenState) return;
     const plot = gardenState.layout[plotIdx];
     if (!plot.cropId) { showToast('🌿 Nothing to fertilize here yet.'); return; }
+    const history = getPlotHistory(plot);
+    const nextHistory = { ...history, fertilizeCount: history.fertilizeCount + 1, lastFertilizedAt: Date.now() };
     const layout = [...gardenState.layout];
-    if (plot.status === 'growing') { layout[plotIdx] = { ...plot, status: 'healthy' }; showToast('🌿 Fertilized! Crop is thriving now.'); }
-    else if (plot.status === 'healthy') { layout[plotIdx] = { ...plot, status: 'harvest_ready' }; showToast('🌿 Fertilized! Crop is ready to harvest.'); }
+    if (plot.status === 'growing') { layout[plotIdx] = { ...plot, status: 'healthy', history: nextHistory }; showToast('🌿 Fertilized! Crop is thriving now.'); }
+    else if (plot.status === 'healthy') { layout[plotIdx] = { ...plot, status: 'harvest_ready', history: nextHistory }; showToast('🌿 Fertilized! Crop is ready to harvest.'); }
     else { showToast('🌿 This crop is already at its peak.'); return; }
     update({ layout });
   };
@@ -349,6 +408,20 @@ const Garden = () => {
     showToast(`🎁 Event bonus claimed! +${COIN_REWARDS.eventBonus} 🪙`);
   };
 
+  // Phase 3, item 10 — weekly goals reward. Coins are awarded for real
+  // through the same addCoins()/update() path quests and events already
+  // use. The XP figure is shown the same way HarvestRewardsCard already
+  // shows XP elsewhere in this module: informational only, since Garden
+  // has no write access to the separate farmer_progress XP ledger that
+  // GamifiedDashboard uses.
+  const handleClaimWeeklyGoals = () => {
+    if (!gardenState || !user) return;
+    if (!weeklyGoals.every(g => g.done) || weeklyCounters.claimed) return;
+    markWeeklyGoalsClaimed(user.id);
+    addCoins(WEEKLY_GOAL_REWARD.coins, 'Weekly Farm Goals');
+    showToast(`🎯 Weekly goals complete! +${WEEKLY_GOAL_REWARD.coins} 🪙 · +${WEEKLY_GOAL_REWARD.xp} XP`);
+  };
+
   const handleDropLeaf = async () => {
     if (!user || !visitingRow) return;
     const { error } = await supabase.from('garden_leaves').insert({
@@ -393,7 +466,10 @@ const Garden = () => {
       const pest = PESTS[Math.floor(Math.random() * PESTS.length)];
       const newPest: PestEvent = { plotIdx: target.i, pestName: pest.name, emoji: pest.emoji, expiresAt: Date.now() + 24 * 60 * 60 * 1000 };
       localStorage.setItem(lastSpawnKey, String(Date.now()));
-      update({ activePests: [...gardenState.activePests, newPest] });
+      const targetHistory = getPlotHistory(target.p);
+      const layout = [...gardenState.layout];
+      layout[target.i] = { ...target.p, history: { ...targetHistory, pestCount: targetHistory.pestCount + 1 } };
+      update({ layout, activePests: [...gardenState.activePests, newPest] });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gardenState]);
@@ -413,6 +489,7 @@ const Garden = () => {
       });
       const remainingPests = gardenState.activePests.filter(p => p.expiresAt >= now);
       update({ layout, activePests: remainingPests });
+      if (user) bumpWeeklyCounter(user.id, 'pestOutbreaksThisWeek', expiredPests.length);
       showToast(`🐛 ${expiredPests.length} pest${expiredPests.length > 1 ? 's' : ''} caused damage while undefended!`);
     }, 60_000);
     return () => clearInterval(interval);
@@ -465,22 +542,35 @@ const Garden = () => {
   const availableCropsToPlant = trackedCrops.filter(c => c.status !== 'wilted' && !plantedCropIds.has(c.id));
   const showPlantOnboarding = !plantOnboardingSeen && gardenState.layout.every(p => !p.cropId) && trackedCrops.length > 0;
 
+  const dailyQuests: DailyQuest[] = DAILY_QUEST_DEFS.map(def => ({ ...def, progress: questProgress[def.id] ?? 0 }));
   const questsClaimable = dailyQuests.filter(q => q.progress >= q.target && !claimedQuests.includes(q.id)).length;
   const eventsClaimable = SEASONAL_EVENTS.filter(ev => !gardenState.claimedEvents.includes(ev.id)).length;
 
-  // Notification click -> mark read, then follow wherever it points. This
-  // never touches game state itself, only navigation/selection.
-  const handleSelectNotification = (n: GardenNotification) => {
-    markRead(n.id);
-    if (n.link.kind === 'plot') {
-      setSelectedPlot(n.link.plotIndex);
-    } else if (n.link.kind === 'quests') {
-      setBottomTab(0);
-      document.getElementById('garden-bottom-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else if (n.link.kind === 'route') {
-      navigate(n.link.path);
-    }
-  };
+  // Phase 3 — Farm Calendar/Harvest Forecast, Smart Recommendations, Garden
+  // Insights, Crop History, Farm Goals. All read-only, derived from
+  // gardenState plus the small localStorage logs above (see
+  // cropHistoryLog.ts / weeklyGoals.ts) — nothing here changes gameplay
+  // state or Supabase schema.
+  const currentMonth = new Date().getMonth();
+  const farmEvents = computeFarmEvents(gardenState.layout);
+  const recommendations = computeSmartRecommendations(gardenState.layout, gardenState.activePests, currentMonth);
+  const cropHistoryEntries = user ? loadCropHistory(user.id) : [];
+  const lifetimeStats = computeLifetimeStats(cropHistoryEntries);
+  const gardenInsights = computeGardenInsights(gardenState.layout, gardenState.activePests, currentMonth, lifetimeStats);
+  const averageHealthPct = computeAverageHealthPct(gardenState.layout, gardenState.activePests, currentMonth);
+  const weeklyCounters = user
+    ? loadWeeklyCounters(user.id)
+    : { harvestsThisWeek: 0, waterActionsThisWeek: 0, pestOutbreaksThisWeek: 0, claimed: false };
+  const weeklyGoals = computeWeeklyGoals(weeklyCounters, averageHealthPct);
+  const goalsClaimable = weeklyGoals.every(g => g.done) && !weeklyCounters.claimed ? 1 : 0;
+
+  // Search & Filter (item 8)
+  const cropTypeOptions = Array.from(
+    new Map(gardenState.layout.filter(p => p.cropId).map(p => [p.name, { name: p.name, emoji: p.emoji }])).values(),
+  );
+  const filterMatchCount = gardenState.layout.filter((p, idx) => plotMatchesFilters(
+    p, gardenState.activePests.some(pe => pe.plotIdx === idx), statusFilter, cropTypeFilter,
+  )).length;
 
   return (
     <div className="mx-auto max-w-[1400px] px-3 py-4 sm:px-5 sm:py-6">
@@ -536,10 +626,11 @@ const Garden = () => {
         level={level}
         progress={xpProgress}
         pestCount={gardenState.activePests.length}
+        claimableEvents={eventsClaimable}
         notifications={notifications}
-        unreadNotifications={unreadCount}
-        onSelectNotification={handleSelectNotification}
-        onMarkAllNotificationsRead={markAllRead}
+        unreadNotifications={unreadNotifications}
+        onSelectNotification={onSelectNotification}
+        onMarkAllNotificationsRead={onMarkAllNotificationsRead}
       />
 
       {gardenState.equippedCosmetics.length > 0 && (
@@ -555,6 +646,15 @@ const Garden = () => {
           })}
         </div>
       )}
+
+      <CropSearchFilter
+        statusFilter={statusFilter}
+        cropTypeFilter={cropTypeFilter}
+        onChangeStatus={setStatusFilter}
+        onChangeCropType={setCropTypeFilter}
+        cropTypeOptions={cropTypeOptions}
+        matchCount={filterMatchCount}
+      />
 
       {/* Main dashboard layout: left tools · grid · right panel */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[64px_1fr_300px]">
@@ -573,6 +673,8 @@ const Garden = () => {
             onToolApply={handleToolApply}
             plantingCrop={plantingCrop}
             onCancelPlanting={handleCancelPlanting}
+            statusFilter={statusFilter}
+            cropTypeFilter={cropTypeFilter}
           />
         </div>
 
@@ -597,30 +699,33 @@ const Garden = () => {
         </div>
       </div>
 
-      <div id="garden-bottom-panel">
-        <BottomPanel
-          activeTab={bottomTab}
-          onChangeTab={setBottomTab}
-          questsBadge={questsClaimable}
-          eventsBadge={eventsClaimable}
-        >
-          {tab => {
-            if (tab === 0) return <QuestsTab quests={dailyQuests} onClaim={handleClaimQuest} claimed={claimedQuests} />;
-            if (tab === 1) return <EventsTab claimedEvents={gardenState.claimedEvents} onClaim={handleClaimEvent} />;
-            if (tab === 2) return (
-              <SocialTab
-                currentUserId={user.id}
-                leafCount={gardenState.leafCount}
-                equippedCosmeticsCount={gardenState.equippedCosmetics.length}
-                rows={leaderboardRows}
-                loading={leaderboardLoading}
-                onVisit={setVisitingRow}
-              />
-            );
-            return <LeaderboardTab currentUserId={user.id} rows={leaderboardRows} loading={leaderboardLoading} onVisit={setVisitingRow} />;
-          }}
-        </BottomPanel>
-      </div>
+      <BottomPanel
+        activeTab={bottomTab}
+        onChangeTab={setBottomTab}
+        questsBadge={questsClaimable}
+        eventsBadge={eventsClaimable}
+        goalsBadge={goalsClaimable}
+      >
+        {tab => {
+          if (tab === 0) return <QuestsTab quests={dailyQuests} onClaim={handleClaimQuest} claimed={claimedQuests} />;
+          if (tab === 1) return <EventsTab claimedEvents={gardenState.claimedEvents} onClaim={handleClaimEvent} />;
+          if (tab === 2) return (
+            <SocialTab
+              currentUserId={user.id}
+              leafCount={gardenState.leafCount}
+              equippedCosmeticsCount={gardenState.equippedCosmetics.length}
+              rows={leaderboardRows}
+              loading={leaderboardLoading}
+              onVisit={setVisitingRow}
+            />
+          );
+          if (tab === 3) return <LeaderboardTab currentUserId={user.id} rows={leaderboardRows} loading={leaderboardLoading} onVisit={setVisitingRow} />;
+          if (tab === 4) return <FarmCalendarTab events={farmEvents} />;
+          if (tab === 5) return <GardenInsightsTab recommendations={recommendations} insights={gardenInsights} />;
+          if (tab === 6) return <CropHistoryTab entries={cropHistoryEntries} />;
+          return <FarmGoalsTab goals={weeklyGoals} claimed={weeklyCounters.claimed} onClaim={handleClaimWeeklyGoals} />;
+        }}
+      </BottomPanel>
 
       <div className="mt-4 flex justify-end">
         <button

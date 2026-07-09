@@ -12,6 +12,7 @@ interface TopHUDProps {
   level: { level: number; title: string; icon: string; color: string };
   progress: { current: number; needed: number; pct: number };
   pestCount: number;
+  claimableEvents?: number;
   notifications: GardenNotification[];
   unreadNotifications: number;
   onSelectNotification: (notification: GardenNotification) => void;
@@ -19,7 +20,7 @@ interface TopHUDProps {
 }
 
 export default function TopHUD({
-  username, avatarUrl, coins, level, progress, pestCount,
+  username, avatarUrl, coins, level, progress, pestCount, claimableEvents = 0,
   notifications, unreadNotifications, onSelectNotification, onMarkAllNotificationsRead,
 }: TopHUDProps) {
   const season = getCurrentSeason();
@@ -91,6 +92,17 @@ export default function TopHUD({
             >
               {soonestEvent.icon} {eventDaysLeft}d left
             </span>
+          )}
+
+          {claimableEvents > 0 && (
+            <motion.span
+              animate={{ scale: [1, 1.08, 1] }}
+              transition={{ duration: 1.2, repeat: Infinity }}
+              className="flex items-center gap-1 rounded-full bg-gold-100 px-3 py-1.5 text-xs font-bold text-gold-700 shadow-panel"
+              title={`${claimableEvents} event reward${claimableEvents === 1 ? '' : 's'} ready to claim`}
+            >
+              🎁 {claimableEvents}
+            </motion.span>
           )}
 
           <NotificationBell

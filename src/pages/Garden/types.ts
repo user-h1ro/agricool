@@ -11,6 +11,25 @@ export type TrackedCrop = {
   status: CropStatus;
 };
 
+// ─── Phase 3 — Smart Crop Management & Tracking ────────────────────────────
+// `history` is additive and OPTIONAL so existing Supabase rows (saved before
+// this shipped) keep working with zero migration: `layout` is stored as a
+// single jsonb column, so adding new keys inside each plot object never
+// requires a schema change — old rows simply don't have `history` yet, and
+// every read-site goes through `getPlotHistory()` (helpers.ts) which fills in
+// safe defaults. Nothing here changes growth/reward/pest mechanics; it only
+// records real actions (planted/watered/fertilized/attacked) already taken
+// through the existing handlers so the dashboard can show a true record
+// instead of an invented one.
+export type PlotHistory = {
+  plantedAt: number | null; // ms epoch; null = unknown (legacy crop or never set)
+  lastWateredAt: number | null;
+  lastFertilizedAt: number | null;
+  waterCount: number;
+  fertilizeCount: number;
+  pestCount: number; // pest attacks encountered while this crop occupied the plot
+};
+
 export type PlotCrop = {
   cropId: string | null; // null = empty plot
   name: string;
@@ -19,6 +38,7 @@ export type PlotCrop = {
   hp: number; // 0-3 health
   defenseItem: 'scarecrow' | 'pesticide' | null;
   defenseExpiresAt: string | null; // ISO
+  history?: PlotHistory; // optional — see note above
 };
 
 export type GardenLayout = PlotCrop[]; // always 25 plots (5x5)

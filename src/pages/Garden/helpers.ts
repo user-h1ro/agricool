@@ -1,8 +1,42 @@
 import { GRID_SIZE, COLS, ROWS, FARMER_LEVELS, SEASONS, WEATHER_TYPES } from './constants';
-import { GardenLayout, GardenState, PlotCrop } from './types';
+import { GardenLayout, GardenState, PlotCrop, PlotHistory } from './types';
 
 export function emptyPlot(): PlotCrop {
   return { cropId: null, name: '', emoji: '', status: 'growing', hp: 3, defenseItem: null, defenseExpiresAt: null };
+}
+
+// ── Plot history (Phase 3) ──────────────────────────────────────────────
+// A freshly-planted plot starts a brand new history; nothing is inherited
+// from whatever was there before (matches how a real garden bed's "planted
+// on" date resets when you plant something new in it).
+export function freshPlotHistory(plantedAt: number = Date.now()): PlotHistory {
+  return { plantedAt, lastWateredAt: null, lastFertilizedAt: null, waterCount: 0, fertilizeCount: 0, pestCount: 0 };
+}
+
+// Every read of a plot's history should go through this — old Supabase rows
+// saved before Phase 3 simply won't have `history` yet, and this keeps that
+// a non-event everywhere in the dashboard instead of an optional-chaining
+// minefield. `plantedAt: null` signals "unknown" so callers can fall back to
+// the older status-based estimate instead of claiming a fake day one.
+export function getPlotHistory(plot: PlotCrop): PlotHistory {
+  return plot.history ?? { plantedAt: null, lastWateredAt: null, lastFertilizedAt: null, waterCount: 0, fertilizeCount: 0, pestCount: 0 };
+}
+
+export function isSameDay(a: number, b: number): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate();
+}
+
+// ISO-8601 week key (Mon–Sun), e.g. "2026-W28" — used to reset Farm Goals
+// once a week the same way todayKey() resets daily quests once a day.
+export function weekKey(date: number = Date.now()): string {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7)); // nearest Thursday
+  const week1 = new Date(d.getFullYear(), 0, 4);
+  const weekNo = 1 + Math.round(((d.getTime() - week1.getTime()) / 86_400_000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+  return `${d.getFullYear()}-W${String(weekNo).padStart(2, '0')}`;
 }
 
 export function emptyGrid(): GardenLayout {
@@ -116,8 +150,15 @@ export function dayOfYear() {
 }
 
 export function getTodaysWeather() {
-  const seed = dayOfYear();
-  return WEATHER_TYPES[seed % WEATHER_TYPES.length];
+  return getWeatherForOffset(0);
+}
+
+// Same deterministic day-hash as getTodaysWeather, offset by N days — lets
+// Smart Recommendations give a "rain tomorrow" style tip without ever
+// calling an external weather API.
+export function getWeatherForOffset(offsetDays: number) {
+  const seed = dayOfYear() + offsetDays;
+  return WEATHER_TYPES[((seed % WEATHER_TYPES.length) + WEATHER_TYPES.length) % WEATHER_TYPES.length];
 }
 
 export function clamp(n: number, min: number, max: number) {
