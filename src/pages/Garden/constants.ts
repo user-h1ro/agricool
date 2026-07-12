@@ -61,26 +61,17 @@ export const PESTS = [
 // of the garden. Progress is derived from real garden actions taken through
 // this session (defending a pest, using the watering tool, harvesting).
 export const DAILY_QUEST_DEFS: Omit<DailyQuest, 'progress'>[] = [
-  { id: 'harvest', icon: '🌾', title: 'Harvest 1 crop', target: 1, coinReward: COIN_REWARDS.questDone },
-  { id: 'water', icon: '💧', title: 'Water 3 plants', target: 3, coinReward: COIN_REWARDS.questDone },
-  { id: 'defeat_pest', icon: '🐛', title: 'Defeat 1 pest', target: 1, coinReward: COIN_REWARDS.questDone },
+  { id: 'harvest', icon: '🌾', title: 'Harvest 1 crop', target: 1, coinReward: COIN_REWARDS.questDone, xpReward: 90 },
+  { id: 'water', icon: '💧', title: 'Water 3 plants', target: 3, coinReward: COIN_REWARDS.questDone, xpReward: 60 },
+  { id: 'defeat_pest', icon: '🐛', title: 'Defeat 1 pest', target: 1, coinReward: COIN_REWARDS.questDone, xpReward: 75 },
 ];
 
 // ── Farmer level thresholds ─────────────────────────────────────────────
-// Mirrors GamifiedDashboard's FARMER_LEVELS so the Garden HUD shows the same
-// level/title the player sees on their main dashboard.
-export const FARMER_LEVELS = [
-  { level: 1, min: 0, title: 'Seedling', color: '#86efac', icon: '🌱' },
-  { level: 2, min: 100, title: 'Sprout', color: '#4ade80', icon: '🌿' },
-  { level: 3, min: 250, title: 'Tender', color: '#22c55e', icon: '🪴' },
-  { level: 4, min: 500, title: 'Cultivator', color: '#16a34a', icon: '🧑\u200d🌾' },
-  { level: 5, min: 900, title: 'Field Hand', color: '#15803d', icon: '🚜' },
-  { level: 6, min: 1400, title: 'Crop Master', color: '#166534', icon: '🌾' },
-  { level: 7, min: 2000, title: 'Agri Veteran', color: '#f59e0b', icon: '⭐' },
-  { level: 8, min: 3000, title: 'Harvest Champion', color: '#f97316', icon: '🏆' },
-  { level: 9, min: 4500, title: 'Farm Legend', color: '#ef4444', icon: '🔥' },
-  { level: 10, min: 7000, title: 'Harvest King', color: '#a855f7', icon: '👑' },
-];
+// Phase 3.5: moved to src/utilities/xpSystem.ts as the single source of
+// truth (shared with GamifiedDashboard.tsx, which had its own copy of this
+// exact table). Re-exported here only so nothing that imported
+// FARMER_LEVELS from this file needs to change its import path.
+export { FARMER_LEVELS } from '@/utilities/xpSystem';
 
 export const SEASONS = [
   { name: 'Dry Season', icon: '☀️', months: [11, 0, 1, 2, 3] }, // Nov-Apr (PH dry season)

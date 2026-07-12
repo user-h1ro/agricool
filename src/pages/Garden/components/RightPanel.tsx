@@ -4,6 +4,7 @@ import GardenOverview from './dashboard/GardenOverview';
 import CropDashboard from './dashboard/CropDashboard';
 import EmptyPlotPanel from './dashboard/EmptyPlotPanel';
 import { computeGardenOverview } from './dashboard/dashboardHelpers';
+import { DailyXPBreakdown } from '@/utilities/xpSystem';
 
 interface RightPanelProps {
   selectedPlot: number | null;
@@ -13,6 +14,7 @@ interface RightPanelProps {
   activePests: PestEvent[];
   trackedCrops: TrackedCrop[];
   hasAnyTrackedCrops: boolean;
+  dailyXP: DailyXPBreakdown;
   onClose: () => void;
   onPlaceCrop: (crop: TrackedCrop) => void;
   onWater: () => void;
@@ -30,7 +32,7 @@ interface RightPanelProps {
 // defense actions are still handled by the exact same callbacks Garden.tsx
 // already passes in; nothing about how those actions work has changed.
 export default function RightPanel({
-  selectedPlot, plot, pest, layout, activePests, trackedCrops, hasAnyTrackedCrops,
+  selectedPlot, plot, pest, layout, activePests, trackedCrops, hasAnyTrackedCrops, dailyXP,
   onClose, onPlaceCrop, onWater, onFertilize, onDefend, onUpgrade, onHarvest, onRemove,
 }: RightPanelProps) {
   const overviewStats = computeGardenOverview(layout, activePests);
@@ -43,7 +45,7 @@ export default function RightPanel({
             key="overview"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
           >
-            <GardenOverview stats={overviewStats} />
+            <GardenOverview stats={overviewStats} dailyXP={dailyXP} />
           </motion.div>
         ) : (
           <motion.div

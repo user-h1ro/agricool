@@ -25,8 +25,6 @@ import Toast from './components/Toast';
 
 import { useFarmerLevel } from './hooks/useFarmerLevel';
 import { useProfile } from './hooks/useProfile';
-import { useGardenNotifications } from './hooks/useGardenNotifications';
-import { GardenNotification } from './notifications/types';
 
 import { getCropConfig, getSeasonInfo } from '@/pages/GamifiedDashboard/cropConfig';
 import {
@@ -34,7 +32,7 @@ import {
 } from './constants';
 import {
   emptyGrid, emptyPlot, dbRowToState, stateToDbRow, dispatchCoinEvent,
-  freshPlotHistory, getPlotHistory, getTodaysWeather,
+  freshPlotHistory, getPlotHistory,
 } from './helpers';
 import {
   Cosmetic, DailyQuest, DailyQuestId, GardenState, LeaderboardRow, PestEvent,
@@ -48,6 +46,11 @@ import { loadCropHistory, pushCropHistoryEntry, computeLifetimeStats } from './c
 import {
   loadWeeklyCounters, bumpWeeklyCounter, markWeeklyGoalsClaimed, computeWeeklyGoals, WEEKLY_GOAL_REWARD,
 } from './components/dashboard/weeklyGoals';
+import CelebrationLayer from './components/CelebrationLayer';
+import {
+  awardXP, checkLevelMilestoneAchievements, unlockAchievement, ACHIEVEMENTS, XP_REWARDS, XPCategory,
+  getDailyXPBreakdown,
+} from '@/utilities/xpSystem';
 
 // ── Daily quest local persistence ──────────────────────────────────────────
 function todayKey() { return new Date().toISOString().slice(0, 10); }
@@ -99,24 +102,6 @@ const Garden = () => {
 
   const profile = useProfile(user?.id, user?.email);
   const { xp, level, progress: xpProgress } = useFarmerLevel(user?.id);
-
-  // Notification bell (top HUD) — derives from garden state transitions.
-  const notificationsDailyQuests: DailyQuest[] = DAILY_QUEST_DEFS.map(def => ({
-    ...def, progress: questProgress[def.id] ?? 0,
-  }));
-  const {
-    notifications, unreadCount: unreadNotifications, markRead, markAllRead: onMarkAllNotificationsRead,
-  } = useGardenNotifications({
-    userId: user?.id,
-    layout: gardenState?.layout ?? [],
-    activePests: gardenState?.activePests ?? [],
-    weatherLabel: getTodaysWeather().label,
-    dailyQuests: notificationsDailyQuests,
-    level: level.level,
-  });
-  const onSelectNotification = useCallback((notification: GardenNotification) => {
-    markRead(notification.id);
-  }, [markRead]);
 
   // ── Load ──
   const loadData = useCallback(async () => {
@@ -228,6 +213,41 @@ const Garden = () => {
     showToast(`🪙 +${amount} coins — ${reason}`);
   };
 
+  // Phase 3.5, item 11 fix — this is the missing link. Every Garden action
+  // that should earn XP now calls this instead of nothing: it awards XP
+  // through the single centralized xpSystem.ts (same function
+  // GamifiedDashboard.tsx now calls too), which persists to farmer_progress
+  // and dispatches the agricool:xp event that CelebrationLayer/TopHUD react
+  // to. Also checks the two level-milestone achievements after every award,
+  // so leveling up to 5 or 10 via Garden actions unlocks them exactly like
+  // it does from the Tracker.
+  const awardGardenXP = async (amount: number, reason: string, category: XPCategory) => {
+    if (!user) return null;
+    const result = await awardXP(user.id, amount, reason, category);
+    if (result.leveledUp && result.newLevel) {
+      const unlocked = await checkLevelMilestoneAchievements(user.id, result.newLevel);
+      unlocked.forEach(a => showToast(`🏅 Achievement Unlocked: ${a.title}! +${a.xp} XP`));
+    }
+    return result;
+  };
+
+  // Shared achievement-unlock check for Garden actions — reuses the exact
+  // same achievement IDs/definitions GamifiedDashboard uses (harvesting is
+  // harvesting, regardless of which module it happened in), so a player
+  // who's never touched the Tracker can still unlock "First Harvest" from
+  // the Garden alone, and vice versa (unlockAchievement is idempotent per
+  // ID, so there's no risk of double-crediting either way).
+  const checkGardenAchievement = async (id: string) => {
+    if (!user) return;
+    const isNew = await unlockAchievement(user.id, id);
+    if (!isNew) return;
+    const achievement = ACHIEVEMENTS.find(a => a.id === id);
+    if (achievement) {
+      await awardGardenXP(achievement.xp, `Achievement: ${achievement.title}`, 'achievements');
+      showToast(`🏅 Achievement Unlocked: ${achievement.title}! +${achievement.xp} XP`);
+    }
+  };
+
   // ── Quest progress helper ──
   const bumpQuest = (id: DailyQuestId, amount = 1) => {
     if (!user) return;
@@ -246,6 +266,8 @@ const Garden = () => {
     setClaimedQuests(nextClaimed);
     saveQuestProgress(user.id, { progress: questProgress, claimed: nextClaimed });
     addCoins(def.coinReward, `Quest: ${def.title}`);
+    awardGardenXP(def.xpReward, `Quest: ${def.title}`, 'quests');
+    showToast(`✅ Quest Complete! +${def.xpReward} XP`);
   };
 
   // ── Garden actions ──
@@ -258,6 +280,7 @@ const Garden = () => {
     };
     update({ layout });
     showToast(`🌱 ${crop.name} planted!`);
+    awardGardenXP(XP_REWARDS.plantCrop, `Planted ${crop.name}`, 'planting');
   };
 
   // Step 1: user picked a seed from the Plant menu — arm it and prompt them
@@ -302,7 +325,7 @@ const Garden = () => {
     update({ layout });
   };
 
-  const handleHarvest = (plotIdx: number) => {
+  const handleHarvest = async (plotIdx: number) => {
     if (!gardenState || !user) return;
     const plot = gardenState.layout[plotIdx];
     if (plot.status !== 'harvest_ready') return;
@@ -311,13 +334,14 @@ const Garden = () => {
     const crop = getCropConfig(plot.name);
     const seasonInfo = crop ? getSeasonInfo(crop, new Date().getMonth()) : undefined;
     const hasPest = gardenState.activePests.some(p => p.plotIdx === plotIdx);
-    const estXp = computeHarvestEstimate(crop, seasonInfo, computeHealthInfo(plot, hasPest, seasonInfo).score).xp;
+    const healthScore = computeHealthInfo(plot, hasPest, seasonInfo).score;
+    const estXp = computeHarvestEstimate(crop, seasonInfo, healthScore).xp;
 
     const layout = [...gardenState.layout];
     layout[plotIdx] = emptyPlot();
     const bonus = gardenState.claimedEvents.includes('rainy_season') ? COIN_REWARDS.harvest * 2 : COIN_REWARDS.harvest;
 
-    pushCropHistoryEntry(user.id, {
+    const updatedHistory = pushCropHistoryEntry(user.id, {
       plotIndex: plotIdx, name: plot.name, emoji: plot.emoji, plantedAt: history.plantedAt,
       endedAt: Date.now(), outcome: 'harvested',
       waterCount: history.waterCount, fertilizeCount: history.fertilizeCount, pestCount: history.pestCount,
@@ -329,6 +353,24 @@ const Garden = () => {
     showToast(`🌾 Harvested ${plot.name}! +${bonus} 🪙`);
     bumpQuest('harvest');
     setSelectedPlot(null);
+
+    // Phase 3.5, item 3 — base harvest XP, plus two real, discrete bonuses.
+    // Each awardXP() is awaited in sequence (not fired in parallel) so the
+    // second and third reads see the first and second writes — this is the
+    // exact race a fire-and-forget upsert would lose one of.
+    await awardGardenXP(XP_REWARDS.harvestCrop, `Harvested ${plot.name}`, 'harvest');
+    if (seasonInfo?.status === 'in_season') {
+      await awardGardenXP(XP_REWARDS.harvestInSeasonBonus, 'In-season harvest bonus', 'harvest');
+    }
+    if (healthScore >= 100) {
+      await awardGardenXP(XP_REWARDS.perfectHealthBonus, 'Perfect crop health bonus', 'harvest');
+    }
+
+    // Real achievement milestones, from the crop-history log's actual
+    // updated harvest count — not a fabricated trigger.
+    const { totalHarvested } = computeLifetimeStats(updatedHistory);
+    if (totalHarvested === 1) await checkGardenAchievement('first_harvest');
+    if (totalHarvested === 3) await checkGardenAchievement('three_harvests');
   };
 
   const handleWater = (plotIdx: number) => {
@@ -345,6 +387,7 @@ const Garden = () => {
     showToast('💧 Watered! HP restored.');
     bumpQuest('water');
     bumpWeeklyCounter(user.id, 'waterActionsThisWeek');
+    awardGardenXP(XP_REWARDS.waterCrop, `Watered ${plot.name}`, 'watering');
   };
 
   const handleFertilize = (plotIdx: number) => {
@@ -377,7 +420,10 @@ const Garden = () => {
     const activePests = gardenState.activePests.filter(p => p.plotIdx !== plotIdx);
     update({ layout, coins: gardenState.coins - def.cost, activePests });
     showToast(`🛡️ ${def.name} placed! Crop HP restored.`);
-    if (hadPest) bumpQuest('defeat_pest');
+    if (hadPest) {
+      bumpQuest('defeat_pest');
+      awardGardenXP(XP_REWARDS.defeatPest, `Defeated pest on ${layout[plotIdx].name}`, 'defense');
+    }
   };
 
   const handleBuyCosmetic = (item: Cosmetic) => {
@@ -408,17 +454,15 @@ const Garden = () => {
     showToast(`🎁 Event bonus claimed! +${COIN_REWARDS.eventBonus} 🪙`);
   };
 
-  // Phase 3, item 10 — weekly goals reward. Coins are awarded for real
-  // through the same addCoins()/update() path quests and events already
-  // use. The XP figure is shown the same way HarvestRewardsCard already
-  // shows XP elsewhere in this module: informational only, since Garden
-  // has no write access to the separate farmer_progress XP ledger that
-  // GamifiedDashboard uses.
+  // Phase 3.5 — now that Garden has a real XP ledger, the weekly-goals
+  // reward awards real XP too (it was flavor-only in Phase 3, since Garden
+  // had no XP mechanic at all yet).
   const handleClaimWeeklyGoals = () => {
     if (!gardenState || !user) return;
     if (!weeklyGoals.every(g => g.done) || weeklyCounters.claimed) return;
     markWeeklyGoalsClaimed(user.id);
     addCoins(WEEKLY_GOAL_REWARD.coins, 'Weekly Farm Goals');
+    awardGardenXP(WEEKLY_GOAL_REWARD.xp, 'Weekly Farm Goals complete', 'quests');
     showToast(`🎯 Weekly goals complete! +${WEEKLY_GOAL_REWARD.coins} 🪙 · +${WEEKLY_GOAL_REWARD.xp} XP`);
   };
 
@@ -563,6 +607,9 @@ const Garden = () => {
     : { harvestsThisWeek: 0, waterActionsThisWeek: 0, pestOutbreaksThisWeek: 0, claimed: false };
   const weeklyGoals = computeWeeklyGoals(weeklyCounters, averageHealthPct);
   const goalsClaimable = weeklyGoals.every(g => g.done) && !weeklyCounters.claimed ? 1 : 0;
+  const dailyXP = user ? getDailyXPBreakdown(user.id) : {
+    planting: 0, watering: 0, defense: 0, harvest: 0, quests: 0, verification: 0, achievements: 0, other: 0, total: 0,
+  };
 
   // Search & Filter (item 8)
   const cropTypeOptions = Array.from(
@@ -617,6 +664,7 @@ const Garden = () => {
       )}
 
       <Toast message={toast} />
+      <CelebrationLayer />
 
       <TopHUD
         username={profile.username}
@@ -627,10 +675,6 @@ const Garden = () => {
         progress={xpProgress}
         pestCount={gardenState.activePests.length}
         claimableEvents={eventsClaimable}
-        notifications={notifications}
-        unreadNotifications={unreadNotifications}
-        onSelectNotification={onSelectNotification}
-        onMarkAllNotificationsRead={onMarkAllNotificationsRead}
       />
 
       {gardenState.equippedCosmetics.length > 0 && (
@@ -687,6 +731,7 @@ const Garden = () => {
             activePests={gardenState.activePests}
             trackedCrops={availableCropsToPlant}
             hasAnyTrackedCrops={trackedCrops.length > 0}
+            dailyXP={dailyXP}
             onClose={() => setSelectedPlot(null)}
             onPlaceCrop={crop => selectedPlot !== null && handlePlaceCrop(selectedPlot, crop)}
             onWater={() => selectedPlot !== null && handleWater(selectedPlot)}

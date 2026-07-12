@@ -67,102 +67,32 @@ type LeaderboardRow = {
 
 
 // ─── Gamification System ─────────────────────────────────────────────────────
+// Phase 3.5 — this used to be its own full implementation, duplicated (by
+// hand) from a near-identical copy in Garden's own helpers.ts/constants.ts.
+// Both are now the single src/utilities/xpSystem.ts. `getFarmerXP` is kept
+// as a local name via the import alias below so the two existing call
+// sites (this file's mount-time reads) don't need to change at all.
+import {
+  FARMER_LEVELS, getFarmerLevel, getXpToNextLevel, XP_REWARDS,
+  getCachedXP as getFarmerXP, loadXPFromDB as loadFarmerXPFromDB, awardXP as awardXPCentral,
+  ACHIEVEMENTS, getUnlockedAchievements, loadAchievementsFromDB, unlockAchievement as unlockAchievementCentral,
+  checkLevelMilestoneAchievements, getDailyXPBreakdown,
+  type Achievement,
+} from '@/utilities/xpSystem';
 
+// The old XP_TABLE's field names are used throughout this file (XP_TABLE.verify,
+// .harvest, etc.) — kept as a thin re-mapping onto the centralized XP_REWARDS
+// values (which are unchanged from these originals) so none of those call
+// sites below need to be rewritten.
 const XP_TABLE = {
-  verify:        40,
-  recovery:      15,
-  harvest:      120,
-  taskDone:      10,
-  streakBonus:   60,
-  tokenEarned:   25,
-  questComplete: 80,
+  verify: XP_REWARDS.verify,
+  recovery: XP_REWARDS.recovery,
+  harvest: XP_REWARDS.trackerHarvest,
+  taskDone: XP_REWARDS.taskDone,
+  streakBonus: XP_REWARDS.streakBonus,
+  tokenEarned: XP_REWARDS.tokenEarned,
+  questComplete: XP_REWARDS.trackerQuestComplete,
 };
-
-const FARMER_LEVELS = [
-  { level: 1,  min: 0,    title: 'Seedling',        color: '#86efac', icon: '🌱' },
-  { level: 2,  min: 100,  title: 'Sprout',           color: '#4ade80', icon: '🌿' },
-  { level: 3,  min: 250,  title: 'Tender',           color: '#22c55e', icon: '🪴' },
-  { level: 4,  min: 500,  title: 'Cultivator',       color: '#16a34a', icon: '🧑‍🌾' },
-  { level: 5,  min: 900,  title: 'Field Hand',       color: '#15803d', icon: '🚜' },
-  { level: 6,  min: 1400, title: 'Crop Master',      color: '#166534', icon: '🌾' },
-  { level: 7,  min: 2000, title: 'Agri Veteran',     color: '#f59e0b', icon: '⭐' },
-  { level: 8,  min: 3000, title: 'Harvest Champion', color: '#f97316', icon: '🏆' },
-  { level: 9,  min: 4500, title: 'Farm Legend',      color: '#ef4444', icon: '🔥' },
-  { level: 10, min: 7000, title: 'Harvest King',     color: '#a855f7', icon: '👑' },
-];
-
-function getFarmerLevel(xp: number) {
-  for (let i = FARMER_LEVELS.length - 1; i >= 0; i--) {
-    if (xp >= FARMER_LEVELS[i].min) return FARMER_LEVELS[i];
-  }
-  return FARMER_LEVELS[0];
-}
-
-function getXpToNextLevel(xp: number): { current: number; needed: number; pct: number } {
-  const cur = getFarmerLevel(xp);
-  const nextIdx = FARMER_LEVELS.findIndex(l => l.level === cur.level) + 1;
-  if (nextIdx >= FARMER_LEVELS.length) return { current: xp - cur.min, needed: 0, pct: 100 };
-  const next = FARMER_LEVELS[nextIdx];
-  const current = xp - cur.min;
-  const needed = next.min - cur.min;
-  return { current, needed, pct: Math.min(100, (current / needed) * 100) };
-}
-
-// ── XP: Supabase-backed (localStorage as fast cache, DB as source of truth) ──
-async function loadFarmerXPFromDB(userId: string): Promise<number> {
-  try {
-    const { data } = await supabase
-      .from('farmer_progress')
-      .select('xp')
-      .eq('user_id', userId)
-      .maybeSingle();
-    const xp = data?.xp ?? 0;
-    // keep local cache in sync
-    try { localStorage.setItem(`agricool_xp_${userId}`, String(xp)); } catch {}
-    return xp;
-  } catch {
-    // fall back to cache
-    try { return parseInt(localStorage.getItem(`agricool_xp_${userId}`) ?? '0') || 0; } catch { return 0; }
-  }
-}
-
-function getFarmerXP(userId: string): number {
-  // fast local read — caller should hydrate from DB on mount
-  try { return parseInt(localStorage.getItem(`agricool_xp_${userId}`) ?? '0') || 0; } catch { return 0; }
-}
-
-async function addFarmerXPToDB(
-  userId: string,
-  amount: number,
-): Promise<{ newXp: number; leveledUp: boolean; newLevel: typeof FARMER_LEVELS[0] | null }> {
-  // BUG FIX: always read XP from DB (source of truth) before computing the new
-  // value.  The old code read only from localStorage, which starts at 0 on every
-  // fresh page load BEFORE loadFarmerXPFromDB has had a chance to hydrate it.
-  // That caused the level comparison to treat current XP as 0, so any award
-  // appeared to "level up" from level 1 even when the user was already higher.
-  const old = await loadFarmerXPFromDB(userId);
-  const oldLevel = getFarmerLevel(old);
-  const newXp = old + amount;
-  const newLevel = getFarmerLevel(newXp);
-  // update local cache immediately for responsive UI
-  try { localStorage.setItem(`agricool_xp_${userId}`, String(newXp)); } catch {}
-  // persist to DB (upsert into farmer_progress)
-  supabase.from('farmer_progress').upsert({ user_id: userId, xp: newXp });
-  const leveledUp = newLevel.level > oldLevel.level;
-  return { newXp, leveledUp, newLevel: leveledUp ? newLevel : null };
-}
-
-// Legacy sync shim — only used for non-async reads before DB hydration
-function addFarmerXP(userId: string, amount: number): { newXp: number; leveledUp: boolean; newLevel: typeof FARMER_LEVELS[0] | null } {
-  const old = getFarmerXP(userId);
-  const oldLevel = getFarmerLevel(old);
-  const newXp = old + amount;
-  const newLevel = getFarmerLevel(newXp);
-  try { localStorage.setItem(`agricool_xp_${userId}`, String(newXp)); } catch {}
-  supabase.from('farmer_progress').upsert({ user_id: userId, xp: newXp });
-  const leveledUp = newLevel.level > oldLevel.level;
-  return { newXp, leveledUp, newLevel: leveledUp ? newLevel : null };
-}
 
 // ── AgriCoin bridge: award coins in garden_state from tracker actions ─────────
 async function awardGardenCoins(userId: string, amount: number): Promise<void> {
@@ -182,59 +112,12 @@ async function awardGardenCoins(userId: string, amount: number): Promise<void> {
 }
 
 // ─── Achievement System ───────────────────────────────────────────────────────
-type Achievement = {
-  id: string; icon: string; title: string; desc: string; xp: number; rarity: 'common' | 'rare' | 'epic' | 'legendary';
-};
-const ACHIEVEMENTS: Achievement[] = [
-  { id: 'first_verify',   icon: '📸', title: 'First Proof',       desc: 'Submit your first verification photo',         xp: 50,   rarity: 'common'    },
-  { id: 'first_token',    icon: '🎟️', title: 'Token Farmer',      desc: 'Earn your first Free Listing Token',           xp: 75,   rarity: 'common'    },
-  { id: 'first_harvest',  icon: '🌾', title: 'First Harvest',     desc: 'Harvest your first crop',                      xp: 150,  rarity: 'rare'      },
-  { id: 'streak_3',       icon: '🔥', title: 'Hot Streak',        desc: 'Reach a 3-window verification streak',        xp: 100,  rarity: 'rare'      },
-  { id: 'streak_5',       icon: '💥', title: 'On Fire',           desc: 'Reach a 5-window streak on one crop',         xp: 200,  rarity: 'epic'      },
-  { id: 'recovery_hero',  icon: '💪', title: 'Recovery Hero',     desc: 'Bring a wilted crop back to life',            xp: 80,   rarity: 'common'    },
-  { id: 'full_queue',     icon: '🌿', title: 'Full House',        desc: 'Fill your entire crop queue',                 xp: 120,  rarity: 'rare'      },
-  { id: 'task_perfect',   icon: '✅', title: 'Perfect Day',       desc: 'Complete all tasks in a day with zero fails', xp: 90,   rarity: 'rare'      },
-  { id: 'three_harvests', icon: '🏅', title: 'Triple Harvest',    desc: 'Harvest 3 different crops',                   xp: 300,  rarity: 'epic'      },
-  { id: 'five_tokens',    icon: '💰', title: 'Token Hoarder',     desc: 'Accumulate 5 Free Listing Tokens',            xp: 200,  rarity: 'epic'      },
-  { id: 'level_5',        icon: '⭐', title: 'Halfway There',     desc: 'Reach Farmer Level 5',                        xp: 250,  rarity: 'epic'      },
-  { id: 'harvest_king',   icon: '👑', title: 'Harvest King',      desc: 'Reach the maximum Farmer Level 10',           xp: 1000, rarity: 'legendary' },
-];
-
-function getUnlockedAchievements(userId: string): Set<string> {
-  try {
-    const raw = localStorage.getItem(`agricool_achievements_${userId}`);
-    return new Set(raw ? JSON.parse(raw) : []);
-  } catch { return new Set(); }
-}
-
-async function loadAchievementsFromDB(userId: string): Promise<Set<string>> {
-  try {
-    const { data } = await supabase
-      .from('farmer_progress')
-      .select('achievements')
-      .eq('user_id', userId)
-      .maybeSingle();
-    const ids: string[] = data?.achievements ?? [];
-    try { localStorage.setItem(`agricool_achievements_${userId}`, JSON.stringify(ids)); } catch {}
-    return new Set(ids);
-  } catch {
-    return getUnlockedAchievements(userId);
-  }
-}
-
-function unlockAchievement(userId: string, id: string): boolean {
-  const unlocked = getUnlockedAchievements(userId);
-  if (unlocked.has(id)) return false;
-  unlocked.add(id);
-  const arr = [...unlocked];
-  try { localStorage.setItem(`agricool_achievements_${userId}`, JSON.stringify(arr)); } catch {}
-  // persist to DB — onConflict ensures the full achievements array is written
-  supabase.from('farmer_progress').upsert(
-    { user_id: userId, achievements: arr },
-    { onConflict: 'user_id' }
-  );
-  return true;
-}
+// Phase 3.5 — Achievement/getUnlockedAchievements/loadAchievementsFromDB/
+// ACHIEVEMENTS all now come from the shared xpSystem.ts import above (this
+// used to be a second, hand-typed copy of the exact same 12 achievements).
+// unlockAchievement is imported as `unlockAchievementCentral` since it's now
+// async (its Supabase upsert is properly awaited instead of fire-and-forget)
+// — see checkAndUnlockAchievement below for the adapted call site.
 
 // ─── Daily Quest System ───────────────────────────────────────────────────────
 type DailyQuest = {
@@ -1700,10 +1583,10 @@ const AchievementToast = ({ achievement, onDone }: { achievement: Achievement; o
 };
 
 // ─── XP Popup ─────────────────────────────────────────────────────────────────
-const XPPopup = ({ amount, label, onDone }: { amount: number; label: string; onDone: () => void }) => {
+const XPPopup = ({ amount, label, index, onDone }: { amount: number; label: string; index: number; onDone: () => void }) => {
   useEffect(() => { const t = setTimeout(onDone, 1800); return () => clearTimeout(t); }, [onDone]);
   return (
-    <Box position="fixed" top="18%" left="50%" zIndex={8500} pointerEvents="none"
+    <Box position="fixed" top={`calc(18% + ${index * 56}px)`} left="50%" zIndex={8500} pointerEvents="none"
       style={{ transform: 'translateX(-50%)', animation: 'xpPop 1.8s ease forwards' }}
       bg="linear-gradient(135deg,#14532d,#16a34a)" color="white"
       borderRadius="full" px={6} py={3}
@@ -1742,12 +1625,20 @@ const DailyQuestPanel = ({ userId, dailyStats, questProgress }: {
   };
 
   const completedCount = quests.filter(q => getProgress(q) >= q.target).length;
-  const totalXP = quests.filter(q => getProgress(q) >= q.target).reduce((s, q) => s + q.xp, 0);
+  // Phase 3.5, item 8 — the real, full breakdown (every category that
+  // actually earned XP today), not just today's completed quests.
+  const dailyXP = getDailyXPBreakdown(userId);
+  const xpRows: { label: string; value: number }[] = [
+    { label: 'Harvest', value: dailyXP.harvest },
+    { label: 'Quests', value: dailyXP.quests },
+    { label: 'Verification', value: dailyXP.verification },
+    { label: 'Achievements', value: dailyXP.achievements },
+  ].filter(r => r.value > 0);
 
   return (
     <Box bg="white" borderRadius="20px" border="1.5px solid #fde68a" p={5} mb={6}
       boxShadow="0 2px 16px rgba(245,158,11,0.08)">
-      <HStack mb={4} gap={2} justify="space-between">
+      <HStack mb={dailyXP.total > 0 ? 2 : 4} gap={2} justify="space-between">
         <HStack gap={2}>
           <Text fontSize="lg">⚡</Text>
           <Text fontWeight="900" color="#92400e" fontSize="md">Daily Quests</Text>
@@ -1756,10 +1647,20 @@ const DailyQuestPanel = ({ userId, dailyStats, questProgress }: {
             {completedCount}/3 done {completedCount === 3 ? '🎉' : ''}
           </Badge>
         </HStack>
-        {totalXP > 0 && (
-          <Text fontSize="11px" fontWeight="800" color="#16a34a">+{totalXP} XP earned today</Text>
+        {dailyXP.total > 0 && (
+          <Text fontSize="12px" fontWeight="900" color="#16a34a">{dailyXP.total} XP earned today</Text>
         )}
       </HStack>
+      {dailyXP.total > 0 && (
+        <HStack gap={3} mb={4} flexWrap="wrap">
+          {xpRows.map(row => (
+            <HStack key={row.label} gap={1} bg="#f0fdf4" borderRadius="full" px={2.5} py={1}>
+              <Text fontSize="10px" fontWeight="700" color="gray.500">{row.label}</Text>
+              <Text fontSize="10px" fontWeight="900" color="#16a34a">+{row.value}</Text>
+            </HStack>
+          ))}
+        </HStack>
+      )}
       <VStack gap={3} align="stretch">
         {quests.map(q => {
           const progress = getProgress(q);
@@ -2245,7 +2146,8 @@ const GamifiedDashboard = () => {
   // async DB hydration completes (see achievementSeed in useEffect below).
   const [achievementSeed, setAchievementSeed] = useState(0);
   const [journalSeed, setJournalSeed] = useState(0);
-  const [xpPopup, setXpPopup] = useState<{ amount: number; label: string } | null>(null);
+  const [xpPopups, setXpPopups] = useState<{ id: number; amount: number; label: string }[]>([]);
+  const xpPopupIdRef = useRef(0);
   const [confetti, setConfetti] = useState(false);
   // Daily quest stats (tracked in memory, refreshed on actions)
   const [dailyVerifies, setDailyVerifies] = useState(0);
@@ -2283,27 +2185,35 @@ const GamifiedDashboard = () => {
     setQuestProgress(getQuestProgress(user.id));
   }, [user]);
 
+  // Maps this file's existing free-text XP labels onto the shared
+  // XPCategory buckets, purely for the Daily XP Summary breakdown (item 8)
+  // — it doesn't change what's awarded, only how it's tallied.
+  const categorizeXPLabel = (label: string): 'harvest' | 'quests' | 'verification' | 'achievements' | 'other' => {
+    if (label.startsWith('Quest:')) return 'quests';
+    if (label.startsWith('Achievement:')) return 'achievements';
+    if (label === 'Harvest!') return 'harvest';
+    if (label === 'Verification' || label === 'Recovery' || label.endsWith('Streak Bonus') || label === 'Token Earned') return 'verification';
+    return 'other';
+  };
+
   const awardXP = useCallback((amount: number, label: string) => {
     if (!user) return;
-    // async path: write to Supabase, update local state when resolved
-    addFarmerXPToDB(user.id, amount).then(result => {
+    // async path: write to Supabase (centralized xpSystem), update local
+    // state when resolved. awardXPCentral awaits its own upsert internally,
+    // so this remains correct even if called again before the first
+    // resolves — see xpSystem.ts's awardXP for the read-modify-write fix.
+    awardXPCentral(user.id, amount, label, categorizeXPLabel(label)).then(result => {
       setFarmerXP_state(result.newXp);
-      setXpPopup({ amount, label });
+      const id = ++xpPopupIdRef.current;
+      setXpPopups(prev => [...prev, { id, amount, label }]);
+      setTimeout(() => setXpPopups(prev => prev.filter(p => p.id !== id)), 1800);
+
       if (result.leveledUp && result.newLevel) {
         setConfetti(true);
         setTimeout(() => setLevelUpData(result.newLevel), 600);
-        if (result.newLevel.level >= 5) {
-          if (unlockAchievement(user.id, 'level_5')) {
-            const a = ACHIEVEMENTS.find(x => x.id === 'level_5')!;
-            setTimeout(() => setPendingAchievement(a), 2000);
-          }
-        }
-        if (result.newLevel.level >= 10) {
-          if (unlockAchievement(user.id, 'harvest_king')) {
-            const a = ACHIEVEMENTS.find(x => x.id === 'harvest_king')!;
-            setTimeout(() => setPendingAchievement(a), 2000);
-          }
-        }
+        checkLevelMilestoneAchievements(user.id, result.newLevel).then(unlocked => {
+          unlocked.forEach(a => setTimeout(() => setPendingAchievement(a), 2000));
+        });
       }
     });
   }, [user]);
@@ -2333,8 +2243,8 @@ const GamifiedDashboard = () => {
 
   const checkAndUnlockAchievement = useCallback((id: string) => {
     if (!user) return;
-    const isNew = unlockAchievement(user.id, id);
-    if (isNew) {
+    unlockAchievementCentral(user.id, id).then(isNew => {
+      if (!isNew) return;
       const a = ACHIEVEMENTS.find(x => x.id === id);
       if (a) {
         // Bump seed immediately so AchievementGallery re-reads localStorage
@@ -2345,7 +2255,7 @@ const GamifiedDashboard = () => {
           awardXP(a.xp, `Achievement: ${a.title}`);
         }, 800);
       }
-    }
+    });
   }, [user, awardXP]);
 
   // Track which task IDs have already been auto-failed to avoid repeated DB calls
@@ -2814,7 +2724,9 @@ const GamifiedDashboard = () => {
       <ConfettiBurst trigger={confetti} onDone={() => setConfetti(false)} />
       {levelUpData && <LevelUpModal level={levelUpData} onClose={() => setLevelUpData(null)} />}
       {pendingAchievement && <AchievementToast achievement={pendingAchievement} onDone={dismissAchievement} />}
-      {xpPopup && <XPPopup amount={xpPopup.amount} label={xpPopup.label} onDone={() => setXpPopup(null)} />}
+      {xpPopups.map((p, i) => (
+        <XPPopup key={p.id} amount={p.amount} label={p.label} index={i} onDone={() => setXpPopups(prev => prev.filter(x => x.id !== p.id))} />
+      ))}
 
       {/* Toast */}
       {toast && (

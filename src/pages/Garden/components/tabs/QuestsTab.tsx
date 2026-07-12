@@ -19,9 +19,14 @@ export default function QuestsTab({ quests, onClaim, claimed }: QuestsTabProps) 
           const isDone = q.progress >= q.target;
           const isClaimed = claimed.includes(q.id);
           return (
-            <div key={q.id} className="rounded-xl border border-garden-100 bg-white/80 p-3 shadow-panel">
+            <div
+              key={q.id}
+              className={`rounded-xl border p-3 shadow-panel transition-colors ${
+                isDone ? 'border-garden-300 bg-garden-50' : 'border-garden-100 bg-white/80'
+              }`}
+            >
               <div className="mb-2 flex items-center gap-2">
-                <span className="text-xl">{q.icon}</span>
+                <span className="text-xl">{isDone ? '✅' : q.icon}</span>
                 <p className="text-xs font-bold text-garden-900">{q.title}</p>
               </div>
               <div className="mb-2 h-2 w-full overflow-hidden rounded-full bg-garden-100">
@@ -40,10 +45,10 @@ export default function QuestsTab({ quests, onClaim, claimed }: QuestsTabProps) 
                     onClick={() => onClaim(q.id)}
                     className="rounded-full bg-gold-500 px-2.5 py-1 text-[11px] font-bold text-white shadow-panel transition hover:bg-gold-600"
                   >
-                    Claim +{q.coinReward} 🪙
+                    Claim +{q.coinReward} 🪙 · +{q.xpReward} XP
                   </button>
                 ) : (
-                  <span className="text-[11px] font-semibold text-garden-400">+{q.coinReward} 🪙</span>
+                  <span className="text-[11px] font-semibold text-garden-400">+{q.coinReward} 🪙 · +{q.xpReward} XP</span>
                 )}
               </div>
             </div>

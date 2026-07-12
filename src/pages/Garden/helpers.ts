@@ -1,4 +1,4 @@
-import { GRID_SIZE, COLS, ROWS, FARMER_LEVELS, SEASONS, WEATHER_TYPES } from './constants';
+import { GRID_SIZE, COLS, ROWS, SEASONS, WEATHER_TYPES } from './constants';
 import { GardenLayout, GardenState, PlotCrop, PlotHistory } from './types';
 
 export function emptyPlot(): PlotCrop {
@@ -116,22 +116,12 @@ export function plotColIdx(idx: number) {
 export const TOTAL_TILES = COLS * ROWS;
 
 // ── Farmer level ─────────────────────────────────────────────────────────
-export function getFarmerLevel(xp: number) {
-  for (let i = FARMER_LEVELS.length - 1; i >= 0; i--) {
-    if (xp >= FARMER_LEVELS[i].min) return FARMER_LEVELS[i];
-  }
-  return FARMER_LEVELS[0];
-}
-
-export function getXpToNextLevel(xp: number): { current: number; needed: number; pct: number } {
-  const cur = getFarmerLevel(xp);
-  const nextIdx = FARMER_LEVELS.findIndex(l => l.level === cur.level) + 1;
-  if (nextIdx >= FARMER_LEVELS.length) return { current: xp - cur.min, needed: 0, pct: 100 };
-  const next = FARMER_LEVELS[nextIdx];
-  const current = xp - cur.min;
-  const needed = next.min - cur.min;
-  return { current, needed, pct: Math.min(100, Math.round((current / needed) * 100)) };
-}
+// Phase 3.5: this used to be its own hand-copied implementation (a second
+// one lived in GamifiedDashboard.tsx). Both now come from the single
+// xpSystem.ts — re-exported here so useFarmerLevel.ts's existing
+// `import { getFarmerLevel, getXpToNextLevel } from '../helpers'` keeps
+// working unchanged.
+export { getFarmerLevel, getXpToNextLevel } from '@/utilities/xpSystem';
 
 // ── Lightweight day/season/weather flavor (deterministic, no external API) ─
 // Season follows the real calendar month. "Day counter" and weather are

@@ -108,4 +108,5 @@ export interface DailyQuest {
   target: number;
   progress: number;
   coinReward: number;
+  xpReward: number;
 }
