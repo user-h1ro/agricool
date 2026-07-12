@@ -25,6 +25,8 @@ import Toast from './components/Toast';
 
 import { useFarmerLevel } from './hooks/useFarmerLevel';
 import { useProfile } from './hooks/useProfile';
+import { useGardenNotifications } from './hooks/useGardenNotifications';
+import { GardenNotification } from './notifications/types';
 
 import { getCropConfig, getSeasonInfo } from '@/pages/GamifiedDashboard/cropConfig';
 import {
@@ -32,7 +34,7 @@ import {
 } from './constants';
 import {
   emptyGrid, emptyPlot, dbRowToState, stateToDbRow, dispatchCoinEvent,
-  freshPlotHistory, getPlotHistory,
+  freshPlotHistory, getPlotHistory, getTodaysWeather,
 } from './helpers';
 import {
   Cosmetic, DailyQuest, DailyQuestId, GardenState, LeaderboardRow, PestEvent,
@@ -102,6 +104,24 @@ const Garden = () => {
 
   const profile = useProfile(user?.id, user?.email);
   const { xp, level, progress: xpProgress } = useFarmerLevel(user?.id);
+
+  // Notification bell (top HUD) — derives from garden state transitions.
+  const notificationsDailyQuests: DailyQuest[] = DAILY_QUEST_DEFS.map(def => ({
+    ...def, progress: questProgress[def.id] ?? 0,
+  }));
+  const {
+    notifications, unreadCount: unreadNotifications, markRead, markAllRead: onMarkAllNotificationsRead,
+  } = useGardenNotifications({
+    userId: user?.id,
+    layout: gardenState?.layout ?? [],
+    activePests: gardenState?.activePests ?? [],
+    weatherLabel: getTodaysWeather().label,
+    dailyQuests: notificationsDailyQuests,
+    level: level.level,
+  });
+  const onSelectNotification = useCallback((notification: GardenNotification) => {
+    markRead(notification.id);
+  }, [markRead]);
 
   // ── Load ──
   const loadData = useCallback(async () => {
@@ -675,6 +695,10 @@ const Garden = () => {
         progress={xpProgress}
         pestCount={gardenState.activePests.length}
         claimableEvents={eventsClaimable}
+        notifications={notifications}
+        unreadNotifications={unreadNotifications}
+        onSelectNotification={onSelectNotification}
+        onMarkAllNotificationsRead={onMarkAllNotificationsRead}
       />
 
       {gardenState.equippedCosmetics.length > 0 && (
