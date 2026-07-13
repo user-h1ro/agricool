@@ -170,7 +170,12 @@ export async function unlockAchievement(userId: string, id: string): Promise<boo
   unlocked.add(id);
   const arr = [...unlocked];
   try { localStorage.setItem(achievementCacheKey(userId), JSON.stringify(arr)); } catch { /* ignore */ }
-  await supabase.from('farmer_progress').upsert({ user_id: userId, achievements: arr }, { onConflict: 'user_id' });
+  try {
+    const { error } = await supabase.from('farmer_progress').upsert({ user_id: userId, achievements: arr }, { onConflict: 'user_id' });
+    if (error) throw error;
+  } catch (err) {
+    console.error('Failed to persist unlocked achievement:', err);
+  }
   return true;
 }
 
@@ -246,7 +251,18 @@ export async function awardXP(
   const leveledUp = finalLevel.level > oldLevel.level;
 
   writeCachedXP(userId, total);
-  await supabase.from('farmer_progress').upsert({ user_id: userId, xp: total }, { onConflict: 'user_id' });
+  try {
+    const { error } = await supabase.from('farmer_progress').upsert({ user_id: userId, xp: total }, { onConflict: 'user_id' });
+    if (error) throw error;
+  } catch (err) {
+    // The local cache above and the dispatched event below already reflect
+    // this award, so the HUD/animations stay correct for the session even
+    // if this write fails — only the DB persistence is best-effort here.
+    // loadXPFromDB() always re-reads the DB before the next award, so a
+    // transient failure doesn't permanently desync the two; it just means
+    // this particular award needs the network to come back to be saved.
+    console.error('Failed to persist XP award:', err);
+  }
   recordDailyXP(userId, category, amount + bonusAmount);
 
   const result: AwardXPResult = {

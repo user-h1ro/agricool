@@ -21,7 +21,19 @@ function saveNotifications(userId: string, list: GardenNotification[]) {
 // updated list so callers can update React state in one shot.
 export function appendNotifications(userId: string, incoming: GardenNotification[]): GardenNotification[] {
   if (incoming.length === 0) return loadNotifications(userId);
-  const merged = [...incoming, ...loadNotifications(userId)].slice(0, MAX_NOTIFICATIONS);
+  const existing = loadNotifications(userId);
+
+  // Defensive de-dup: don't raise a notification that says the exact same
+  // thing as one the player hasn't read yet. diffSnapshots() is already
+  // written to only fire on a real state transition, so this shouldn't
+  // normally trigger — it's a safety net against re-raising the same alert
+  // (e.g. a future caller re-diffing after a partial state update), not a
+  // replacement for that transition logic.
+  const isDuplicate = (n: GardenNotification) => existing.some(e => !e.read && e.type === n.type && e.message === n.message);
+  const deduped = incoming.filter(n => !isDuplicate(n));
+  if (deduped.length === 0) return existing;
+
+  const merged = [...deduped, ...existing].slice(0, MAX_NOTIFICATIONS);
   saveNotifications(userId, merged);
   return merged;
 }

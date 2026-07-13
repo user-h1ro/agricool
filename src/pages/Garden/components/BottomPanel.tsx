@@ -33,10 +33,17 @@ export default function BottomPanel({ questsBadge, eventsBadge, goalsBadge, chil
               key={tab.label}
               onClick={() => onChangeTab(i)}
               className={`relative flex flex-shrink-0 items-center gap-1.5 rounded-lg px-3.5 py-2 text-xs font-bold transition-colors
-                ${active ? 'bg-white text-garden-900 shadow-panel' : 'text-garden-600 hover:bg-white/60'}`}
+                ${active ? 'text-garden-900' : 'text-garden-600 hover:bg-white/60'}`}
             >
-              <span>{tab.icon}</span>
-              <span>{tab.label}</span>
+              {active && (
+                <motion.span
+                  layoutId="bottomPanelActiveTab"
+                  className="absolute inset-0 rounded-lg bg-white shadow-panel"
+                  transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+                />
+              )}
+              <span className="relative">{tab.icon}</span>
+              <span className="relative">{tab.label}</span>
               {!!badge && (
                 <span className="absolute -right-1 -top-1 h-2 w-2 animate-pulse rounded-full bg-red-500" />
               )}

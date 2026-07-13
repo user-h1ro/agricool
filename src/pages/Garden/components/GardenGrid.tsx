@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { GardenLayout, PestEvent, ToolId, TrackedCrop } from '../types';
+import { GardenLayout, PestEvent, ToolId } from '../types';
 import { COLS, ROWS } from '../constants';
 import { ISO_TILE_W, ISO_TILE_H, isoProject, plotColIdx, getTodaysWeather } from '../helpers';
 import { CropPlant, getGrowthStage } from './CropPlant';
@@ -158,7 +158,8 @@ function absPt([x, y]: [number, number]): [number, number] {
   return [FARM_CX + (x - NATIVE_CX) * FARM_SCALE, FARM_CY + (y - NATIVE_CY) * FARM_SCALE];
 }
 const RIM = NATIVE_OUTER.map(absPt);
-const [RIM_T, RIM_TR, RIM_R, RIM_RB, RIM_B, RIM_BL, RIM_L, RIM_LT] = RIM;
+const RIM_B = RIM[4];
+const RIM_LT = RIM[7];
 
 function lerp(a: [number, number], b: [number, number], t: number): [number, number] {
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
@@ -485,12 +486,6 @@ interface GardenGridProps {
   onSelectPlot: (idx: number | null) => void;
   activeTool: ToolId | null;
   onToolApply: (idx: number, tool: ToolId) => void;
-  // Optional "planting mode" props — present because your Garden.tsx passes
-  // them, but not wired to any behavior here yet. Tell me the intended flow
-  // (e.g. "clicking an empty plot while plantingCrop is set should place it
-  // and clear plantingCrop") and I'll wire it up properly instead of guessing.
-  plantingCrop?: TrackedCrop | null;
-  onCancelPlanting?: () => void;
   // Phase 3, item 8 — Search & Filter. When either is set, non-matching
   // plots dim and matching plots get a highlight ring (see Tile below).
   // Both default to "no constraint" so every existing caller keeps working

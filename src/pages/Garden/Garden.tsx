@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/supabase';
 import { useAuth } from '@/context/AuthProvider';
 import GardenTutorial from './GardenTutorial';
@@ -50,7 +50,7 @@ import {
 } from './components/dashboard/weeklyGoals';
 import CelebrationLayer from './components/CelebrationLayer';
 import {
-  awardXP, checkLevelMilestoneAchievements, unlockAchievement, ACHIEVEMENTS, XP_REWARDS, XPCategory,
+  awardXP, checkLevelMilestoneAchievements, unlockAchievement, loadAchievementsFromDB, ACHIEVEMENTS, XP_REWARDS, XPCategory,
   getDailyXPBreakdown,
 } from '@/utilities/xpSystem';
 
@@ -73,6 +73,7 @@ const Garden = () => {
   const { user } = useAuth();
 
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [trackedCrops, setTrackedCrops] = useState<TrackedCrop[]>([]);
   const [gardenState, setGardenState] = useState<GardenState | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
@@ -102,6 +103,13 @@ const Garden = () => {
   const [questProgress, setQuestProgress] = useState<Record<DailyQuestId, number>>({ harvest: 0, water: 0, defeat_pest: 0 });
   const [claimedQuests, setClaimedQuests] = useState<string[]>([]);
 
+  // Phase 4 — bumped whenever a localStorage-backed log (crop history,
+  // weekly counters, daily XP breakdown) is written outside of React state,
+  // so the memoized dashboard values below know exactly when to recompute
+  // instead of either recomputing every render or silently going stale.
+  const [ledgerVersion, setLedgerVersion] = useState(0);
+  const bumpLedger = () => setLedgerVersion(v => v + 1);
+
   const profile = useProfile(user?.id, user?.email);
   const { xp, level, progress: xpProgress } = useFarmerLevel(user?.id);
 
@@ -127,14 +135,37 @@ const Garden = () => {
   const loadData = useCallback(async () => {
     if (!user) return;
     setLoading(true);
+    setLoadError(false);
 
     const [cropRes, gardenRes] = await Promise.all([
       supabase.from('tracked_crops').select('id, name, emoji, status').eq('user_id', user.id),
       supabase.from('garden_state').select('*').eq('user_id', user.id).maybeSingle(),
+      // Reconciles the local achievement cache with farmer_progress.achievements
+      // before any Garden action can run. Without this, a fresh browser/device
+      // has an empty local cache, so unlockAchievement()'s "already unlocked?"
+      // check would miss an achievement earned elsewhere (e.g. via the
+      // Tracker) and re-award its XP. GamifiedDashboard hit this exact bug
+      // already (see its own loadAchievementsFromDB call) — same fix here.
+      loadAchievementsFromDB(user.id),
     ]);
 
+    if (cropRes.error) console.error('Failed to load tracked crops:', cropRes.error);
     const crops = (cropRes.data ?? []) as TrackedCrop[];
     setTrackedCrops(crops);
+
+    // A failed fetch is NOT the same thing as "no saved garden yet" — the
+    // two used to be handled identically, which meant a transient network
+    // error here would fall through to the "brand new garden" branch below
+    // and then immediately upsert that fresh EMPTY layout back to Supabase,
+    // silently overwriting a real saved garden. Bail out before touching
+    // gardenState (still null) or Supabase at all; the loading guard shows
+    // a retry screen instead of a garden built from a guess.
+    if (gardenRes.error) {
+      console.error('Failed to load garden state:', gardenRes.error);
+      setLoadError(true);
+      setLoading(false);
+      return;
+    }
 
     const saved: GardenState = gardenRes.data
       ? dbRowToState(gardenRes.data)
@@ -178,6 +209,7 @@ const Garden = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (user) loadData(); }, [user?.id, loadData]);
 
   // ── Leaderboard (single fetch, reused across tabs) ──
@@ -188,7 +220,11 @@ const Garden = () => {
       .select('user_id, username, coins, leaf_count, equipped_cosmetics, total_plots')
       .then(({ data, error }) => {
         if (error || !data) { setLeaderboardLoading(false); return; }
-        setLeaderboardRows(data.map((r: any) => ({
+        type LeaderboardRowDb = {
+          user_id: string; username: string; coins: number | null;
+          leaf_count: number | null; equipped_cosmetics: number | null; total_plots: number | null;
+        };
+        setLeaderboardRows((data as LeaderboardRowDb[]).map(r => ({
           userId: r.user_id,
           username: r.username,
           coins: r.coins ?? 0,
@@ -198,6 +234,7 @@ const Garden = () => {
         })));
         setLeaderboardLoading(false);
       });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   // ── Track last click position for coin particle origin ──
@@ -219,9 +256,15 @@ const Garden = () => {
     const next = { ...current, ...patch };
     gardenStateRef.current = next;
     setGardenState(next);
-    await supabase.from('garden_state').upsert(stateToDbRow(user.id, next));
     if (next.coins !== prevCoins) {
       dispatchCoinEvent(next.coins - prevCoins, next.coins, lastClickPos.current);
+    }
+    try {
+      const { error } = await supabase.from('garden_state').upsert(stateToDbRow(user.id, next));
+      if (error) throw error;
+    } catch (err) {
+      console.error('Failed to save garden state:', err);
+      showToast('⚠️ Could not save — check your connection.');
     }
   }, [user]);
 
@@ -244,6 +287,7 @@ const Garden = () => {
   const awardGardenXP = async (amount: number, reason: string, category: XPCategory) => {
     if (!user) return null;
     const result = await awardXP(user.id, amount, reason, category);
+    bumpLedger(); // dailyXP breakdown log was just written — see ledgerVersion above
     if (result.leveledUp && result.newLevel) {
       const unlocked = await checkLevelMilestoneAchievements(user.id, result.newLevel);
       unlocked.forEach(a => showToast(`🏅 Achievement Unlocked: ${a.title}! +${a.xp} XP`));
@@ -304,11 +348,14 @@ const Garden = () => {
   };
 
   // Step 1: user picked a seed from the Plant menu — arm it and prompt them
-  // to tap an empty plot (handled by the planting-mode banner + tile glow).
+  // to tap an empty plot. (Cancel/active-state feedback is the toolbar's
+  // Plant button staying highlighted — see LeftToolbar — not an in-grid
+  // glow; the copy below used to promise a glow effect that was never
+  // actually built, which didn't match what the player saw.)
   const handleChooseCropToPlant = (crop: TrackedCrop) => {
     setPlantingCrop(crop);
     setShowPlantMenu(false);
-    showToast(`🌱 ${crop.name} selected — tap a glowing empty plot to plant it`);
+    showToast(`🌱 ${crop.name} selected — tap an empty plot to plant it`);
   };
 
   // Step 2: user tapped a plot while a seed was armed.
@@ -339,6 +386,7 @@ const Garden = () => {
         waterCount: history.waterCount, fertilizeCount: history.fertilizeCount, pestCount: history.pestCount,
         coins: 0, estXp: 0,
       });
+      bumpLedger();
     }
     const layout = [...gardenState.layout];
     layout[plotIdx] = emptyPlot();
@@ -368,6 +416,7 @@ const Garden = () => {
       coins: bonus, estXp,
     });
     bumpWeeklyCounter(user.id, 'harvestsThisWeek');
+    bumpLedger();
 
     update({ layout, coins: gardenState.coins + bonus });
     showToast(`🌾 Harvested ${plot.name}! +${bonus} 🪙`);
@@ -407,6 +456,7 @@ const Garden = () => {
     showToast('💧 Watered! HP restored.');
     bumpQuest('water');
     bumpWeeklyCounter(user.id, 'waterActionsThisWeek');
+    bumpLedger();
     awardGardenXP(XP_REWARDS.waterCrop, `Watered ${plot.name}`, 'watering');
   };
 
@@ -481,6 +531,7 @@ const Garden = () => {
     if (!gardenState || !user) return;
     if (!weeklyGoals.every(g => g.done) || weeklyCounters.claimed) return;
     markWeeklyGoalsClaimed(user.id);
+    bumpLedger();
     addCoins(WEEKLY_GOAL_REWARD.coins, 'Weekly Farm Goals');
     awardGardenXP(WEEKLY_GOAL_REWARD.xp, 'Weekly Farm Goals complete', 'quests');
     showToast(`🎯 Weekly goals complete! +${WEEKLY_GOAL_REWARD.coins} 🪙 · +${WEEKLY_GOAL_REWARD.xp} XP`);
@@ -497,13 +548,23 @@ const Garden = () => {
       showToast(error.code === '23505' ? '🍃 You already left a leaf for them today!' : '❌ Could not drop leaf — try again');
       return;
     }
-    const { data: ownerRow } = await supabase.from('garden_state').select('coins, leaf_count').eq('user_id', visitingRow.userId).maybeSingle();
-    if (ownerRow) {
-      await supabase.from('garden_state').upsert({
-        user_id: visitingRow.userId,
-        coins: (ownerRow.coins ?? 0) + COIN_REWARDS.leafReceived,
-        leaf_count: (ownerRow.leaf_count ?? 0) + 1,
-      });
+    try {
+      const { data: ownerRow, error: ownerError } = await supabase
+        .from('garden_state').select('coins, leaf_count').eq('user_id', visitingRow.userId).maybeSingle();
+      if (ownerError) throw ownerError;
+      if (ownerRow) {
+        const { error: creditError } = await supabase.from('garden_state').upsert({
+          user_id: visitingRow.userId,
+          coins: (ownerRow.coins ?? 0) + COIN_REWARDS.leafReceived,
+          leaf_count: (ownerRow.leaf_count ?? 0) + 1,
+        });
+        if (creditError) throw creditError;
+      }
+    } catch (err) {
+      // The leaf itself is already recorded above — only the recipient's
+      // bonus-coin credit could be affected here, so this degrades quietly
+      // instead of throwing past the toast the current player already earned.
+      console.error('Failed to credit leaf bonus to recipient:', err);
     }
     showToast('🍃 Leaf dropped! +1 coin for them!');
   };
@@ -553,7 +614,7 @@ const Garden = () => {
       });
       const remainingPests = gardenState.activePests.filter(p => p.expiresAt >= now);
       update({ layout, activePests: remainingPests });
-      if (user) bumpWeeklyCounter(user.id, 'pestOutbreaksThisWeek', expiredPests.length);
+      if (user) { bumpWeeklyCounter(user.id, 'pestOutbreaksThisWeek', expiredPests.length); bumpLedger(); }
       showToast(`🐛 ${expiredPests.length} pest${expiredPests.length > 1 ? 's' : ''} caused damage while undefended!`);
     }, 60_000);
     return () => clearInterval(interval);
@@ -588,7 +649,117 @@ const Garden = () => {
     setSelectedPlot(idx);
   };
 
-  if (!user || loading || !gardenState) {
+  // ── Derived / dashboard values (Phase 4 — memoized) ──────────────────────
+  // These used to be plain consts recomputed on every render — selecting a
+  // plot, toggling a search filter, or opening the shop panel all used to
+  // re-run every one of these, several of them re-reading and JSON.parsing
+  // localStorage on top of that. Hooks must run unconditionally (i.e. before
+  // the loading guard below), so these are null-safe over gardenState
+  // instead of relying on the guard having already run.
+  const currentMonth = new Date().getMonth();
+
+  const plantedCropIds = useMemo(
+    () => new Set((gardenState?.layout ?? []).map(p => p.cropId).filter(Boolean) as string[]),
+    [gardenState?.layout],
+  );
+  const availableCropsToPlant = useMemo(
+    () => trackedCrops.filter(c => c.status !== 'wilted' && !plantedCropIds.has(c.id)),
+    [trackedCrops, plantedCropIds],
+  );
+  const showPlantOnboarding = !plantOnboardingSeen
+    && (gardenState?.layout ?? []).every(p => !p.cropId)
+    && trackedCrops.length > 0;
+
+  const dailyQuests: DailyQuest[] = useMemo(
+    () => DAILY_QUEST_DEFS.map(def => ({ ...def, progress: questProgress[def.id] ?? 0 })),
+    [questProgress],
+  );
+  const questsClaimable = useMemo(
+    () => dailyQuests.filter(q => q.progress >= q.target && !claimedQuests.includes(q.id)).length,
+    [dailyQuests, claimedQuests],
+  );
+  const eventsClaimable = useMemo(
+    () => SEASONAL_EVENTS.filter(ev => !(gardenState?.claimedEvents ?? []).includes(ev.id)).length,
+    [gardenState?.claimedEvents],
+  );
+
+  // Phase 3 — Farm Calendar/Harvest Forecast, Smart Recommendations, Garden
+  // Insights, Crop History, Farm Goals. All read-only, derived from
+  // gardenState plus the small localStorage logs above (see
+  // cropHistoryLog.ts / weeklyGoals.ts) — nothing here changes gameplay
+  // state or Supabase schema.
+  // Phase 4 — the localStorage-backed ones (crop history, weekly counters,
+  // daily XP) key off `ledgerVersion`, which every write to those logs
+  // bumps (see the action handlers above), so they recompute exactly when
+  // their real data changes and never go stale between writes.
+  const farmEvents = useMemo(
+    () => computeFarmEvents(gardenState?.layout ?? []),
+    [gardenState?.layout],
+  );
+  const recommendations = useMemo(
+    () => computeSmartRecommendations(gardenState?.layout ?? [], gardenState?.activePests ?? [], currentMonth),
+    [gardenState?.layout, gardenState?.activePests, currentMonth],
+  );
+  const cropHistoryEntries = useMemo(
+    () => (user ? loadCropHistory(user.id) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [user?.id, ledgerVersion],
+  );
+  const lifetimeStats = useMemo(() => computeLifetimeStats(cropHistoryEntries), [cropHistoryEntries]);
+  const gardenInsights = useMemo(
+    () => computeGardenInsights(gardenState?.layout ?? [], gardenState?.activePests ?? [], currentMonth, lifetimeStats),
+    [gardenState?.layout, gardenState?.activePests, currentMonth, lifetimeStats],
+  );
+  const averageHealthPct = useMemo(
+    () => computeAverageHealthPct(gardenState?.layout ?? [], gardenState?.activePests ?? [], currentMonth),
+    [gardenState?.layout, gardenState?.activePests, currentMonth],
+  );
+  const weeklyCounters = useMemo(
+    () => (user
+      ? loadWeeklyCounters(user.id)
+      : { harvestsThisWeek: 0, waterActionsThisWeek: 0, pestOutbreaksThisWeek: 0, claimed: false }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [user?.id, ledgerVersion],
+  );
+  const weeklyGoals = useMemo(
+    () => computeWeeklyGoals(weeklyCounters, averageHealthPct),
+    [weeklyCounters, averageHealthPct],
+  );
+  const goalsClaimable = weeklyGoals.every(g => g.done) && !weeklyCounters.claimed ? 1 : 0;
+  const dailyXP = useMemo(
+    () => (user ? getDailyXPBreakdown(user.id) : {
+      planting: 0, watering: 0, defense: 0, harvest: 0, quests: 0, verification: 0, achievements: 0, other: 0, total: 0,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [user?.id, ledgerVersion],
+  );
+
+  // Search & Filter (item 8)
+  const cropTypeOptions = useMemo(() => Array.from(
+    new Map((gardenState?.layout ?? []).filter(p => p.cropId).map(p => [p.name, { name: p.name, emoji: p.emoji }])).values(),
+  ), [gardenState?.layout]);
+  const filterMatchCount = useMemo(() => (gardenState?.layout ?? []).filter((p, idx) => plotMatchesFilters(
+    p, (gardenState?.activePests ?? []).some(pe => pe.plotIdx === idx), statusFilter, cropTypeFilter,
+  )).length, [gardenState?.layout, gardenState?.activePests, statusFilter, cropTypeFilter]);
+
+  if (!user || loading || loadError || !gardenState) {
+    if (loadError) {
+      return (
+        <div className="flex h-[60vh] items-center justify-center">
+          <div className="flex flex-col items-center gap-3 text-center">
+            <span className="text-4xl">🌾</span>
+            <p className="text-sm font-semibold text-garden-600">Couldn't load your garden.</p>
+            <p className="max-w-xs text-xs text-garden-400">Check your connection and try again — nothing has been lost.</p>
+            <button
+              onClick={() => loadData()}
+              className="rounded-full bg-garden-600 px-5 py-2 text-xs font-bold text-white shadow-panel transition hover:bg-garden-700"
+            >
+              Retry
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex h-[60vh] items-center justify-center">
         <div className="flex flex-col items-center gap-3">
@@ -601,43 +772,6 @@ const Garden = () => {
 
   const selectedPlotData = selectedPlot !== null ? gardenState.layout[selectedPlot] : null;
   const selectedPest = selectedPlot !== null ? gardenState.activePests.find(p => p.plotIdx === selectedPlot) ?? null : null;
-
-  const plantedCropIds = new Set(gardenState.layout.map(p => p.cropId).filter(Boolean) as string[]);
-  const availableCropsToPlant = trackedCrops.filter(c => c.status !== 'wilted' && !plantedCropIds.has(c.id));
-  const showPlantOnboarding = !plantOnboardingSeen && gardenState.layout.every(p => !p.cropId) && trackedCrops.length > 0;
-
-  const dailyQuests: DailyQuest[] = DAILY_QUEST_DEFS.map(def => ({ ...def, progress: questProgress[def.id] ?? 0 }));
-  const questsClaimable = dailyQuests.filter(q => q.progress >= q.target && !claimedQuests.includes(q.id)).length;
-  const eventsClaimable = SEASONAL_EVENTS.filter(ev => !gardenState.claimedEvents.includes(ev.id)).length;
-
-  // Phase 3 — Farm Calendar/Harvest Forecast, Smart Recommendations, Garden
-  // Insights, Crop History, Farm Goals. All read-only, derived from
-  // gardenState plus the small localStorage logs above (see
-  // cropHistoryLog.ts / weeklyGoals.ts) — nothing here changes gameplay
-  // state or Supabase schema.
-  const currentMonth = new Date().getMonth();
-  const farmEvents = computeFarmEvents(gardenState.layout);
-  const recommendations = computeSmartRecommendations(gardenState.layout, gardenState.activePests, currentMonth);
-  const cropHistoryEntries = user ? loadCropHistory(user.id) : [];
-  const lifetimeStats = computeLifetimeStats(cropHistoryEntries);
-  const gardenInsights = computeGardenInsights(gardenState.layout, gardenState.activePests, currentMonth, lifetimeStats);
-  const averageHealthPct = computeAverageHealthPct(gardenState.layout, gardenState.activePests, currentMonth);
-  const weeklyCounters = user
-    ? loadWeeklyCounters(user.id)
-    : { harvestsThisWeek: 0, waterActionsThisWeek: 0, pestOutbreaksThisWeek: 0, claimed: false };
-  const weeklyGoals = computeWeeklyGoals(weeklyCounters, averageHealthPct);
-  const goalsClaimable = weeklyGoals.every(g => g.done) && !weeklyCounters.claimed ? 1 : 0;
-  const dailyXP = user ? getDailyXPBreakdown(user.id) : {
-    planting: 0, watering: 0, defense: 0, harvest: 0, quests: 0, verification: 0, achievements: 0, other: 0, total: 0,
-  };
-
-  // Search & Filter (item 8)
-  const cropTypeOptions = Array.from(
-    new Map(gardenState.layout.filter(p => p.cropId).map(p => [p.name, { name: p.name, emoji: p.emoji }])).values(),
-  );
-  const filterMatchCount = gardenState.layout.filter((p, idx) => plotMatchesFilters(
-    p, gardenState.activePests.some(pe => pe.plotIdx === idx), statusFilter, cropTypeFilter,
-  )).length;
 
   return (
     <div className="mx-auto max-w-[1400px] px-3 py-4 sm:px-5 sm:py-6">
@@ -694,7 +828,6 @@ const Garden = () => {
         level={level}
         progress={xpProgress}
         pestCount={gardenState.activePests.length}
-        claimableEvents={eventsClaimable}
         notifications={notifications}
         unreadNotifications={unreadNotifications}
         onSelectNotification={onSelectNotification}
@@ -739,8 +872,6 @@ const Garden = () => {
             onSelectPlot={setSelectedPlot}
             activeTool={activeTool}
             onToolApply={handleToolApply}
-            plantingCrop={plantingCrop}
-            onCancelPlanting={handleCancelPlanting}
             statusFilter={statusFilter}
             cropTypeFilter={cropTypeFilter}
           />

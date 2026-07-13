@@ -63,7 +63,21 @@ export const DEFAULT_GARDEN_STATE: GardenState = {
   activePests: [],
 };
 
-export function dbRowToState(row: any): GardenState {
+// Mirrors stateToDbRow's shape in the other direction. Fields are optional/
+// nullable because this comes straight off an untyped Supabase response —
+// the fallbacks below (?? [], ?? 0) already assumed as much; this just
+// makes that assumption explicit instead of leaving the row as `any`.
+type GardenStateDbRow = {
+  layout?: unknown;
+  coins?: number | null;
+  equipped_cosmetics?: string[] | null;
+  unlocked_cosmetics?: string[] | null;
+  leaf_count?: number | null;
+  claimed_events?: string[] | null;
+  active_pests?: GardenState['activePests'] | null;
+};
+
+export function dbRowToState(row: GardenStateDbRow): GardenState {
   const layout: GardenLayout = Array.isArray(row.layout) ? row.layout : [];
   while (layout.length < GRID_SIZE) layout.push(emptyPlot());
   return {

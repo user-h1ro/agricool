@@ -12,7 +12,6 @@ interface TopHUDProps {
   level: { level: number; title: string; icon: string; color: string };
   progress: { current: number; needed: number; pct: number };
   pestCount: number;
-  claimableEvents: number;
   notifications: GardenNotification[];
   unreadNotifications: number;
   onSelectNotification: (notification: GardenNotification) => void;
@@ -20,7 +19,7 @@ interface TopHUDProps {
 }
 
 export default function TopHUD({
-  username, avatarUrl, coins, xp, level, progress, pestCount, claimableEvents,
+  username, avatarUrl, coins, xp, level, progress, pestCount,
   notifications, unreadNotifications, onSelectNotification, onMarkAllNotificationsRead,
 }: TopHUDProps) {
   const season = getCurrentSeason();
