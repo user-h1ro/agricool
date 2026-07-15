@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { GardenLayout, PestEvent, ToolId } from '../types';
 import { COLS, ROWS } from '../constants';
@@ -8,8 +8,10 @@ import { CropFilterId, plotMatchesFilters } from './dashboard/dashboardHelpers';
 import {
   Tree, Shed, FenceSection, Scarecrow, FlowerBed, TransientButterflies,
   LogPile, Barrel, RockCluster, Shrub, Windmill, Barn,
-  CompostBin, Crate, ToolRack, IrrigationChannel,
+  CompostBin, Crate, ToolRack, IrrigationChannel, WildflowerTuft,
 } from './SceneDressing';
+import { ambientLoopTransition, seededRange } from './ambientAnimations';
+import { usePrevious, PLANT_FX_DURATION, HP_BAR_TRANSITION_DURATION, HP_FLASH_DURATION, EASE_OUT } from './interactionAnimations';
 
 // ── Scene canvas ────────────────────────────────────────────────────────────
 // One continuous farm, not four floating patches: a single soil bed carries
@@ -174,7 +176,19 @@ function lerp(a: [number, number], b: [number, number], t: number): [number, num
 const GRASS_PATCHES = [
   { x: 110, y: 300, rx: 55, ry: 22, dark: true }, { x: 660, y: 250, rx: 70, ry: 26, dark: false },
   { x: 150, y: CANVAS_H - 172, rx: 60, ry: 24, dark: true }, { x: 630, y: CANVAS_H - 142, rx: 80, ry: 24, dark: false },
+  // Added for Phase 5.1A visual-density pass — positions verified clear of
+  // the bed diamond and every landmark (barn/trees/windmill/pond/shed) with
+  // a real point-in-polygon + distance check, not eyeballed.
+  { x: 60, y: 250, rx: 40, ry: 16, dark: false }, { x: 755, y: 430, rx: 40, ry: 16, dark: true },
+  { x: 390, y: 595, rx: 55, ry: 20, dark: false }, { x: 220, y: 195, rx: 36, ry: 14, dark: true },
 ];
+
+// Loose accents added in the same pass — same clearance verification as the
+// grass patches above.
+const WILDFLOWER_TUFTS = [{ x: 745, y: 260 }, { x: 300, y: 610 }];
+const TINY_STONES = { x: 55, y: 400 };
+const EXTRA_SHRUB = { x: 770, y: 300 };
+const DIRT_PATCHES = [{ x: 520, y: 615, rx: 38, ry: 13 }, { x: 90, y: 470, rx: 34, ry: 12 }];
 
 const CLOUD_SHADOWS = [
   { y: 210, rx: 55, ry: 15, dur: 42 },
@@ -358,10 +372,59 @@ export default function GardenGrid({
           />
         ))}
 
-        {/* Grass texture patches — variation in the lawn, not scattered props */}
-        {GRASS_PATCHES.map((p, i) => (
-          <ellipse key={i} cx={p.x} cy={p.y} rx={p.rx} ry={p.ry} fill={p.dark ? 'rgba(20,83,45,0.08)' : 'rgba(255,255,255,0.18)'} />
+        {/* Subtle dirt variation — very soft, low-opacity ground tone patches,
+            distinct from grass (no blades/clumps), just breaking up flat lawn
+            color a little. Static: this is texture, not something to notice
+            moving. */}
+        {DIRT_PATCHES.map((p, i) => (
+          <ellipse key={i} cx={p.x} cy={p.y} rx={p.rx} ry={p.ry} fill="rgba(90,64,48,0.1)" />
         ))}
+
+        {/* Grass texture patches — clumps of shaded blades (same layered-
+            ellipse technique as Shrub below), not a flat color wash, so they
+            read as grass at a glance. Seeded wave sway (scaleX/opacity/
+            rotate — transform-only, no layout cost) so the 8 patches never
+            move in sync. */}
+        {GRASS_PATCHES.map((p, i) => {
+          const seed = p.x * 1.1 + p.y * 0.9 + i * 31;
+          const transition = ambientLoopTransition(seed, 5, 8);
+          const wobble = seededRange(seed + 5, 0.6, 1.2);
+          const palette = p.dark ? ['#3f7a34', '#4a8f3e', '#5aa04a'] : ['#5aa04a', '#6bb058', '#7fc466'];
+          const bladeColor = p.dark ? '#2f6428' : '#4a8f3e';
+          const blades = [0, 1, 2, 3, 4, 5, 6, 7].map(bi => {
+            const angle = (bi / 8) * Math.PI * 2;
+            return { dx: Math.cos(angle) * p.rx * 0.55, dy: Math.sin(angle) * p.ry * 0.55, rot: (bi * 37) % 40 - 20 };
+          });
+          return (
+            <motion.g
+              key={i}
+              style={{ transformOrigin: `${p.x}px ${p.y}px` }}
+              animate={{ scaleX: [1, 1.03, 1], opacity: [1, 0.85, 1], rotate: [-wobble, wobble, -wobble] }}
+              transition={transition}
+            >
+              <ellipse cx={p.x} cy={p.y + p.ry * 0.3} rx={p.rx * 0.9} ry={p.ry * 0.4} fill="rgba(0,0,0,0.08)" />
+              <ellipse cx={p.x - p.rx * 0.35} cy={p.y + p.ry * 0.15} rx={p.rx * 0.75} ry={p.ry * 0.75} fill={palette[0]} opacity={0.85} />
+              <ellipse cx={p.x + p.rx * 0.32} cy={p.y + p.ry * 0.1} rx={p.rx * 0.7} ry={p.ry * 0.7} fill={palette[1]} opacity={0.85} />
+              <ellipse cx={p.x} cy={p.y - p.ry * 0.25} rx={p.rx * 0.85} ry={p.ry * 0.85} fill={palette[2]} opacity={0.85} />
+              {blades.map((b, bi) => (
+                <path
+                  key={bi}
+                  d={`M${p.x + b.dx},${p.y + b.dy + 6} Q${p.x + b.dx + 2},${p.y + b.dy - 6} ${p.x + b.dx + 4},${p.y + b.dy + 5}`}
+                  stroke={bladeColor} strokeWidth={2} fill="none" strokeLinecap="round" opacity={0.7}
+                  transform={`rotate(${b.rot} ${p.x + b.dx} ${p.y + b.dy})`}
+                />
+              ))}
+            </motion.g>
+          );
+        })}
+
+        {/* Environmental density pass (Phase 5.1A follow-up) — loose
+            wildflowers, a couple of tiny stones, and one more shrub filling
+            in open lawn. All positions verified clear of the bed diamond and
+            every landmark before placing. */}
+        {WILDFLOWER_TUFTS.map((t, i) => <WildflowerTuft key={i} x={t.x} y={t.y} />)}
+        <RockCluster x={TINY_STONES.x} y={TINY_STONES.y} scale={0.55} />
+        <Shrub x={EXTRA_SHRUB.x} y={EXTRA_SHRUB.y} scale={0.75} />
 
         {/* Drifting cloud shadows on the ground — subtle atmosphere */}
         {CLOUD_SHADOWS.map((c, i) => (
@@ -419,7 +482,7 @@ export default function GardenGrid({
         <Crate x={CRATE_1.x} y={CRATE_1.y} rotation={-6} />
         <Crate x={CRATE_2.x} y={CRATE_2.y} rotation={8} />
         <CompostBin x={COMPOST.x} y={COMPOST.y} />
-        {BOTTOM_FLOWERS.map((f, i) => <FlowerBed key={i} x={f.x} y={f.y} scale={0.7} />)}
+        {BOTTOM_FLOWERS.map((f, i) => <FlowerBed key={i} x={f.x} y={f.y} scale={0.85} />)}
 
         {/* ── Farmhouse dooryard — fence and flower bed clustered as one
             little yard beside the house, not separate placements ── */}
@@ -599,6 +662,35 @@ function Tile({
   const isWilted = plot.status === 'wilted';
   const isHarvestReady = plot.status === 'harvest_ready';
 
+  // ── Phase 5.1B: one-shot interaction feedback ────────────────────────────
+  // Tile is keyed by plot idx (see the .map() call below), not cropId, so it
+  // stays mounted for the plot's whole lifetime — these prev-value
+  // comparisons fire exactly once per real transition, never on an
+  // unrelated re-render, and never on first mount (an already-planted plot
+  // loaded from Supabase shouldn't replay its planting animation).
+  const prevCropId = usePrevious(plot.cropId);
+  const prevHp = usePrevious(plot.hp);
+  const prevHasPest = usePrevious(hasPest);
+
+  const [showPlantFx, setShowPlantFx] = useState(false);
+  const [waterFx, setWaterFx] = useState(false);
+  const [pestRemoveFx, setPestRemoveFx] = useState(false);
+  const [hpFlash, setHpFlash] = useState<'up' | 'down' | null>(null);
+
+  useEffect(() => {
+    if (plot.cropId && prevCropId === null) setShowPlantFx(true);
+  }, [plot.cropId, prevCropId]);
+
+  useEffect(() => {
+    if (prevHp === undefined || plot.hp === prevHp) return;
+    setHpFlash(plot.hp > prevHp ? 'up' : 'down');
+    if (plot.hp > prevHp) setWaterFx(true); // hp only goes up via watering
+  }, [plot.hp, prevHp]);
+
+  useEffect(() => {
+    if (prevHasPest && !hasPest) setPestRemoveFx(true);
+  }, [hasPest, prevHasPest]);
+
   const topPath = roundedDiamond(tx, ty, half_w, half_h, 0.3);
 
   // One soil/status color per plot, not three (top/left/right faces) — there
@@ -655,7 +747,22 @@ function Tile({
         stroke={isSelected ? '#f59e0b' : isHovered ? '#4ade80' : 'none'}
         strokeWidth={isSelected ? 2 : 1.3} strokeOpacity={isSelected ? 1 : 0.8} />
 
-      {/* Selected — animated marching-ants outline */}
+      {/* Selected — soft glow pulse (AnimatePresence so deselecting also
+          animates out smoothly instead of vanishing instantly) plus the
+          existing animated marching-ants outline. */}
+      <AnimatePresence>
+        {isSelected && (
+          <motion.ellipse
+            key="select-glow"
+            cx={tx} cy={ty} rx={half_w * 0.95} ry={half_h * 0.95} fill="none" stroke="#fde68a" strokeWidth={3}
+            initial={{ opacity: 0, scale: 0.85 }}
+            animate={{ opacity: [0.35, 0.7, 0.35], scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.15 } }}
+            transition={{ opacity: { duration: 1.4, repeat: Infinity }, scale: { duration: 0.2, ease: EASE_OUT } }}
+            style={{ filter: 'blur(2px)' }}
+          />
+        )}
+      </AnimatePresence>
       {isSelected && (
         <motion.path
           d={topPath} fill="none" stroke="#fff7d6" strokeWidth={2} strokeDasharray="5,4"
@@ -685,11 +792,27 @@ function Tile({
       {/* Pest — darkened patch under the plant */}
       {hasPest && <ellipse cx={tx} cy={ty} rx={half_w * 0.5} ry={half_h * 0.5} fill="rgba(0,0,0,0.25)" />}
 
-      {/* HP bar */}
+      {/* HP bar — smooth width interpolation instead of an instant snap, plus
+          a brief red/green flash on change (Item 6). */}
       {!isEmpty && (
         <>
           <rect x={tx - 18} y={ty + half_h + 4} width={36} height={4} rx={2} fill="rgba(0,0,0,0.25)" />
-          <rect x={tx - 18} y={ty + half_h + 4} width={36 * (plot.hp / 3)} height={4} rx={2} fill={plot.hp >= 2 ? '#4ade80' : plot.hp === 1 ? '#facc15' : '#f87171'} />
+          <motion.rect
+            x={tx - 18} y={ty + half_h + 4} height={4} rx={2}
+            fill={plot.hp >= 2 ? '#4ade80' : plot.hp === 1 ? '#facc15' : '#f87171'}
+            animate={{ width: 36 * (plot.hp / 3) }}
+            transition={{ duration: HP_BAR_TRANSITION_DURATION, ease: EASE_OUT }}
+          />
+          {hpFlash && (
+            <motion.rect
+              x={tx - 18} y={ty + half_h + 4} width={36} height={4} rx={2}
+              fill={hpFlash === 'up' ? '#4ade80' : '#f87171'}
+              initial={{ opacity: 0.85 }}
+              animate={{ opacity: 0 }}
+              transition={{ duration: HP_FLASH_DURATION, ease: EASE_OUT }}
+              onAnimationComplete={() => setHpFlash(null)}
+            />
+          )}
         </>
       )}
 
@@ -714,19 +837,64 @@ function Tile({
       {/* Plant — grown INTO the soil bed, not floating above it. Rendered as
           a small cluster of individually-shaped plant units so the plot
           reads as "a tomato patch", not "a square with a tomato icon". */}
-      {!isEmpty && (
-        <CropPlant
-          cropName={plot.name}
-          tx={tx}
-          ty={ty}
-          halfW={half_w}
-          halfH={half_h}
-          stage={growthStage}
-          seed={idx}
-          isWilted={isWilted}
-          hasPest={hasPest}
-          isHarvestReady={isHarvestReady}
-        />
+      <AnimatePresence>
+        {!isEmpty && (
+          <CropPlant
+            key={plot.cropId}
+            cropName={plot.name}
+            tx={tx}
+            ty={ty}
+            halfW={half_w}
+            halfH={half_h}
+            stage={growthStage}
+            seed={idx}
+            isWilted={isWilted}
+            hasPest={hasPest}
+            isHarvestReady={isHarvestReady}
+            justWatered={waterFx}
+            pestJustRemoved={pestRemoveFx}
+            onWaterFxDone={() => setWaterFx(false)}
+            onPestRemoveFxDone={() => setPestRemoveFx(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Planting feedback — seed drops in, a dirt puff on landing, the soil
+          briefly compresses. The sprout itself scaling in is CropPlant's own
+          stage-0 pop-in (see interactionAnimations.ts); this is just the
+          soil-level effect around it. One-shot, cleared via
+          onAnimationComplete — no timer. */}
+      {showPlantFx && (
+        <motion.g
+          animate={{ opacity: 1 }}
+          transition={{ duration: PLANT_FX_DURATION }}
+          onAnimationComplete={() => setShowPlantFx(false)}
+        >
+          <motion.circle
+            cx={tx} r={3} fill="#4a3524"
+            initial={{ cy: ty - 40, opacity: 1 }}
+            animate={{ cy: ty, opacity: [1, 1, 0] }}
+            transition={{ duration: PLANT_FX_DURATION * 0.55, times: [0, 0.75, 1], ease: EASE_OUT }}
+          />
+          {[0, 1, 2, 3].map(i => (
+            <motion.circle
+              key={i} cx={tx} cy={ty} r={2} fill="rgba(120,90,60,0.55)"
+              initial={{ opacity: 0, scale: 0.3, x: 0, y: 0 }}
+              animate={{
+                opacity: [0, 0.8, 0], scale: [0.3, 1.6, 2],
+                x: Math.cos(i * 1.6) * 10, y: Math.sin(i * 1.6) * 6 - 4,
+              }}
+              transition={{ duration: PLANT_FX_DURATION * 0.5, delay: PLANT_FX_DURATION * 0.4 }}
+            />
+          ))}
+          <motion.ellipse
+            cx={tx} cy={ty + half_h * 0.3} rx={half_w * 0.5} ry={half_h * 0.3} fill="rgba(0,0,0,0.15)"
+            style={{ transformOrigin: `${tx}px ${ty + half_h * 0.3}px` }}
+            initial={{ scaleY: 1 }}
+            animate={{ scaleY: [1, 0.6, 1] }}
+            transition={{ duration: 0.25, delay: PLANT_FX_DURATION * 0.4 }}
+          />
+        </motion.g>
       )}
 
       {isEmpty && (

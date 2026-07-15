@@ -3,6 +3,10 @@ import { CropStatus } from '../types';
 import {
   getCropConfig, CropVisual, LeafShape, FruitShape,
 } from '@/pages/GamifiedDashboard/cropConfig';
+import {
+  GROWTH_TRANSITION_DURATION, WATER_BOUNCE_DURATION, WATER_BRIGHTEN_DURATION,
+  PEST_REMOVE_DURATION, HARVEST_EXIT_DURATION, EASE_POP, EASE_OUT,
+} from './interactionAnimations';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Phase 2 — data-driven crop rendering. Every crop's silhouette, color,
@@ -383,9 +387,17 @@ function renderSprawlingVine(gx: number, gy: number, v: CropVisual, stage: numbe
 // ─────────────────────────────────────────────────────────────────────────
 export function CropPlant({
   cropName, tx, ty, halfW, halfH, stage, seed, isWilted, hasPest, isHarvestReady,
+  justWatered, pestJustRemoved, onWaterFxDone, onPestRemoveFxDone,
 }: {
   cropName: string; tx: number; ty: number; halfW: number; halfH: number;
   stage: number; seed: number; isWilted: boolean; hasPest: boolean; isHarvestReady: boolean;
+  /** True for one render right after a water action — plays a bounce +
+   * brighten pulse, then calls onWaterFxDone so the caller can clear the flag. */
+  justWatered?: boolean;
+  /** True while the just-removed pest's exit animation is still playing. */
+  pestJustRemoved?: boolean;
+  onWaterFxDone?: () => void;
+  onPestRemoveFxDone?: () => void;
 }) {
   const visual = resolveVisual(cropName);
   const scale = Math.min(2.3, (halfW * 1.85) / REFERENCE_MAX_WIDTH);
@@ -408,19 +420,30 @@ export function CropPlant({
     <motion.g
       style={{ transformOrigin: `${tx}px ${ty + halfH * 0.4}px` }}
       animate={
-        hasPest
+        justWatered
+          ? { scale: [1, 1.1, 0.97, 1] }
+          : hasPest
           ? { x: [0, -1.4, 0, 1.4, 0] }
           : isHarvestReady
           ? { y: [0, -2.4, 0] }
           : { rotate: [-1.6, 1.6, -1.6] }
       }
       transition={
-        hasPest
+        justWatered
+          ? { duration: WATER_BOUNCE_DURATION, ease: EASE_POP }
+          : hasPest
           ? { duration: 0.4, repeat: Infinity }
           : isHarvestReady
           ? { duration: 1.2, repeat: Infinity, ease: 'easeOut' }
           : { duration: 3.4 + (seed % 5) * 0.3, repeat: Infinity, ease: 'easeInOut' }
       }
+      onAnimationComplete={justWatered ? onWaterFxDone : undefined}
+      exit={{
+        scale: [1, 0.85, 1.12, 0.3],
+        y: [0, 2, -16, -30],
+        opacity: [1, 1, 1, 0],
+        transition: { duration: HARVEST_EXIT_DURATION, times: [0, 0.3, 0.6, 1], ease: EASE_OUT },
+      }}
     >
       <g
         style={{
@@ -433,38 +456,93 @@ export function CropPlant({
       >
         {support}
 
-        {bands ? (
-          bands.map((bandNodes, bi) => (
-            <motion.g
-              key={`band${bi}`}
-              style={{ transformOrigin: `${gx}px ${gy}px` }}
-              animate={{ rotate: [-2, 2, -2] }}
-              transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut', delay: bi * 0.35 }}
-            >
-              {bandNodes}
-            </motion.g>
-          ))
-        ) : (
-          <>{foliage}</>
+        {/* Growth-stage transition: keyed on `stage`, so advancing a stage
+            remounts this wrapper and plays a pop-in (scale + fade) instead
+            of the foliage/fruit geometry just snapping to its new shape.
+            The growth clock itself (when `stage` changes) is untouched —
+            this only softens how the change is *shown*. */}
+        <motion.g
+          key={`foliage-${stage}`}
+          initial={{ scale: 0.86, opacity: 0.55 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ duration: GROWTH_TRANSITION_DURATION, ease: EASE_POP }}
+        >
+          {bands ? (
+            bands.map((bandNodes, bi) => (
+              <motion.g
+                key={`band${bi}`}
+                style={{ transformOrigin: `${gx}px ${gy}px` }}
+                animate={{ rotate: [-2, 2, -2] }}
+                transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut', delay: bi * 0.35 }}
+              >
+                {bandNodes}
+              </motion.g>
+            ))
+          ) : (
+            <>{foliage}</>
+          )}
+        </motion.g>
+
+        {fruit.length > 0 && (
+          <motion.g
+            key={`fruit-${stage}`}
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ duration: GROWTH_TRANSITION_DURATION, delay: 0.08, ease: EASE_POP }}
+          >
+            {visual.animationType === 'swing' && (
+              <motion.g
+                style={{ transformOrigin: `${gx}px ${gy - halfH}px` }}
+                animate={{ rotate: [-4, 4, -4] }}
+                transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
+              >
+                {fruit}
+              </motion.g>
+            )}
+            {visual.animationType === 'bob' && (
+              <motion.g animate={{ y: [0, -1.6, 0] }} transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}>
+                {fruit}
+              </motion.g>
+            )}
+            {visual.animationType !== 'swing' && visual.animationType !== 'bob' && (
+              <>{fruit}</>
+            )}
+          </motion.g>
         )}
 
-        {fruit.length > 0 && visual.animationType === 'swing' && (
-          <motion.g
-            style={{ transformOrigin: `${gx}px ${gy - halfH}px` }}
-            animate={{ rotate: [-4, 4, -4] }}
-            transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
+        {/* Watering feedback — a soft brightening wash over the foliage for
+            about a second, on top of the bounce above. Opacity-only (no
+            filter-string interpolation), so it's cheap and reliable. */}
+        {justWatered && (
+          <motion.ellipse
+            cx={gx} cy={gy - halfH * 0.5} rx={halfW * 0.9} ry={halfH * 0.9}
+            fill="#eaffcf"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0, 0.4, 0] }}
+            transition={{ duration: WATER_BRIGHTEN_DURATION, ease: 'easeOut' }}
+            style={{ mixBlendMode: 'soft-light' }}
+          />
+        )}
+
+        {/* Falling droplets + a small splash where each lands. */}
+        {justWatered && [0, 1, 2].map(i => (
+          <motion.text
+            key={i} x={gx + (i - 1) * 7} fontSize={9} textAnchor="middle" style={{ userSelect: 'none' }}
+            initial={{ y: gy - halfH * 1.8, opacity: 1 }}
+            animate={{ y: gy - halfH * (0.5 - i * 0.05), opacity: [1, 1, 0] }}
+            transition={{ duration: WATER_BOUNCE_DURATION * 0.85, delay: i * 0.07, ease: EASE_OUT }}
           >
-            {fruit}
-          </motion.g>
-        )}
-        {fruit.length > 0 && visual.animationType === 'bob' && (
-          <motion.g animate={{ y: [0, -1.6, 0] }} transition={{ duration: 2.4, repeat: Infinity, ease: 'easeInOut' }}>
-            {fruit}
-          </motion.g>
-        )}
-        {fruit.length > 0 && visual.animationType !== 'swing' && visual.animationType !== 'bob' && (
-          <>{fruit}</>
-        )}
+            💧
+          </motion.text>
+        ))}
+        {justWatered && [0, 1, 2].map(i => (
+          <motion.ellipse
+            key={`splash${i}`} cx={gx + (i - 1) * 7} cy={gy - halfH * (0.5 - i * 0.05)} fill="none" stroke="#7dd3fc" strokeWidth={1}
+            initial={{ rx: 0, ry: 0, opacity: 0.8 }}
+            animate={{ rx: 5, ry: 2, opacity: 0 }}
+            transition={{ duration: 0.3, delay: WATER_BOUNCE_DURATION * 0.85 * 0.9 + i * 0.07, ease: EASE_OUT }}
+          />
+        ))}
 
         {/* Pest damage — bite notch + a bug, only while a pest is active */}
         {hasPest && (
@@ -472,6 +550,44 @@ export function CropPlant({
             <circle cx={gx - 6} cy={gy - halfH * 0.6} r={1.6} fill="none" stroke="rgba(0,0,0,0.35)" strokeWidth={0.6} strokeDasharray="1,1" />
             <circle cx={gx + 5} cy={gy - halfH * 0.9} r={1.2} fill="#5a6b2e" />
           </g>
+        )}
+
+        {/* Pest-removal feedback — the bug shakes in place first, THEN
+            puffs into smoke and flies off; leaves get a brief greening wash
+            afterward. Staggered via keyframe `times`, not one blended
+            motion. One-shot, cleared by the caller via onAnimationComplete. */}
+        {pestJustRemoved && (
+          <motion.g
+            initial={{ opacity: 1, x: 0, y: 0, scale: 1, rotate: 0 }}
+            animate={{
+              opacity: [1, 1, 1, 0],
+              x: [0, -3, 3, -3, 3, 10],
+              y: [0, 0, 0, 0, 0, -16],
+              scale: [1, 1, 1, 1, 1, 0.4],
+              rotate: [0, 0, 0, 0, 0, 40],
+            }}
+            transition={{ duration: PEST_REMOVE_DURATION, times: [0, 0.1, 0.2, 0.3, 0.4, 1], ease: EASE_OUT }}
+            onAnimationComplete={onPestRemoveFxDone}
+          >
+            <circle cx={gx + 5} cy={gy - halfH * 0.7} r={2.2} fill="#5a6b2e" />
+            {[0, 1, 2].map(i => (
+              <motion.circle
+                key={i} cx={gx + 5} cy={gy - halfH * 0.7} r={1.5} fill="rgba(200,200,200,0.5)"
+                initial={{ scale: 0.4, opacity: 0.7, x: 0, y: 0 }}
+                animate={{ scale: 1.8 + i * 0.4, opacity: 0, x: (i - 1) * 6, y: -6 - i * 3 }}
+                transition={{ duration: PEST_REMOVE_DURATION * 0.6, delay: PEST_REMOVE_DURATION * 0.4 + i * 0.06 }}
+              />
+            ))}
+          </motion.g>
+        )}
+        {pestJustRemoved && (
+          <motion.ellipse
+            cx={gx} cy={gy - halfH * 0.5} rx={halfW * 0.9} ry={halfH * 0.9} fill="#c9f2b0"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: [0, 0.35, 0] }}
+            transition={{ duration: PEST_REMOVE_DURATION * 1.3, ease: 'easeOut' }}
+            style={{ mixBlendMode: 'soft-light' }}
+          />
         )}
       </g>
     </motion.g>

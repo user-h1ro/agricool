@@ -1,3 +1,4 @@
+import { motion } from 'framer-motion';
 import { HealthTier, healthTierDot } from './dashboardHelpers';
 import HealthFactorBar from './HealthFactorBar';
 
@@ -18,7 +19,11 @@ interface CropHealthCardProps {
 // can see *why* health is what it is, not just the number.
 export default function CropHealthCard({ score, tier, color, water, nutrition, pestRisk, growthSpeed }: CropHealthCardProps) {
   return (
-    <div className="rounded-xl border border-garden-100 bg-white p-3">
+    <motion.div
+      whileHover={{ y: -2 }}
+      transition={{ duration: 0.15 }}
+      className="rounded-xl border border-garden-100 bg-white p-3 shadow-sm hover:shadow-md"
+    >
       <div className="mb-2.5 flex items-center justify-between">
         <span className="text-xs font-bold text-garden-700">❤️ Crop Health</span>
         <span className="text-sm font-extrabold" style={{ color }}>
@@ -31,6 +36,6 @@ export default function CropHealthCard({ score, tier, color, water, nutrition, p
         <HealthFactorBar icon="🐛" label="Pest Risk" pct={pestRisk} invert />
         <HealthFactorBar icon="⚡" label="Growth Speed" pct={growthSpeed} />
       </div>
-    </div>
+    </motion.div>
   );
 }

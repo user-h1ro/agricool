@@ -1,8 +1,10 @@
-import { motion } from 'framer-motion';
+import { useEffect } from 'react';
+import { motion, useMotionValue, useTransform, animate } from 'framer-motion';
 import { SEASONAL_EVENTS } from '../constants';
 import { daysLeft, getCurrentSeason, getTodaysWeather, dayOfYear } from '../helpers';
 import NotificationBell from './NotificationBell';
 import { GardenNotification } from '../notifications/types';
+import { usePrevious, COIN_BURST_DURATION, EASE_OUT } from './interactionAnimations';
 
 interface TopHUDProps {
   username: string;
@@ -71,7 +73,7 @@ export default function TopHUD({
 
         {/* Stats */}
         <div className="flex items-center gap-2 sm:gap-3">
-          <HudChip icon="🪙" value={coins.toLocaleString()} tone="gold" title="AgriCoin balance" />
+          <AnimatedCoinChip coins={coins} />
           <HudChip icon="⚡" value={`${xp.toLocaleString()} XP`} tone="sky" hideOnMobile title="Total XP earned" />
           <HudChip icon={weather.icon} value={weather.label} tone="sky" title="Today's weather" />
           <HudChip icon={season.icon} value={season.name} tone="garden" hideOnMobile title="Current season" />
@@ -106,6 +108,32 @@ export default function TopHUD({
         </div>
       </div>
     </div>
+  );
+}
+
+function AnimatedCoinChip({ coins }: { coins: number }) {
+  const prevCoins = usePrevious(coins);
+  const motionCoins = useMotionValue(coins);
+  const displayValue = useTransform(motionCoins, v => Math.round(v).toLocaleString());
+
+  useEffect(() => {
+    const controls = animate(motionCoins, coins, { duration: COIN_BURST_DURATION, ease: EASE_OUT });
+    return () => controls.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [coins]);
+
+  const justGained = prevCoins !== undefined && coins > prevCoins;
+
+  return (
+    <motion.span
+      title="AgriCoin balance"
+      className="bg-gold-100 text-gold-700 inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold shadow-panel"
+      animate={justGained ? { scale: [1, 1.16, 1] } : undefined}
+      transition={{ duration: 0.35, ease: EASE_OUT }}
+    >
+      <span>🪙</span>
+      <motion.span className="whitespace-nowrap">{displayValue}</motion.span>
+    </motion.span>
   );
 }
 

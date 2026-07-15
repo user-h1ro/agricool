@@ -49,6 +49,7 @@ import {
   loadWeeklyCounters, bumpWeeklyCounter, markWeeklyGoalsClaimed, computeWeeklyGoals, WEEKLY_GOAL_REWARD,
 } from './components/dashboard/weeklyGoals';
 import CelebrationLayer from './components/CelebrationLayer';
+import CoinBurstLayer from './components/CoinBurstLayer';
 import {
   awardXP, checkLevelMilestoneAchievements, unlockAchievement, loadAchievementsFromDB, ACHIEVEMENTS, XP_REWARDS, XPCategory,
   getDailyXPBreakdown,
@@ -819,6 +820,7 @@ const Garden = () => {
 
       <Toast message={toast} />
       <CelebrationLayer />
+      <CoinBurstLayer />
 
       <TopHUD
         username={profile.username}

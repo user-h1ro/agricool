@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { seededRange, ambientLoopTransition } from './ambientAnimations';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Every prop in this file draws its own contact shadow and sits at a fixed
@@ -12,14 +13,27 @@ import { motion, AnimatePresence } from 'framer-motion';
 // ─────────────────────────────────────────────────────────────────────────
 
 export function Tree({ x, y, scale }: { x: number; y: number; scale: number }) {
+  // Seeded on this tree's own placement — every instance gets a different
+  // duration/delay/amplitude without needing a new prop, and the same tree
+  // always gets the same values (see ambientAnimations.ts).
+  const seed = x * 1.7 + y;
+  const amplitude = seededRange(seed + 2, 2, 3); // 2–3°, per spec
+  const scaleAmp = seededRange(seed + 3, 0.012, 0.02); // "slight" — barely perceptible
+  const transition = ambientLoopTransition(seed, 3.6, 5.2);
+  const pivotY = y + 10 * scale; // where the canopy meets the (fixed) trunk
+
   return (
     <g>
-      {/* Grass tufts rooting the trunk into the lawn */}
+      {/* Grass tufts, ground shadow, and trunk stay fixed — only the canopy sways */}
       <ellipse cx={x - 10 * scale} cy={y + 44 * scale} rx={6 * scale} ry={2.4 * scale} fill="#6ea852" opacity={0.8} />
       <ellipse cx={x + 11 * scale} cy={y + 45 * scale} rx={7 * scale} ry={2.6 * scale} fill="#7fbf5c" opacity={0.8} />
-      <motion.g style={{ transformOrigin: `${x}px ${y}px` }} animate={{ rotate: [-1.5, 1.5, -1.5] }} transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}>
-        <ellipse cx={x} cy={y + 46 * scale} rx={22 * scale} ry={7 * scale} fill="rgba(0,0,0,0.15)" />
-        <rect x={x - 4 * scale} y={y + 10 * scale} width={8 * scale} height={26 * scale} fill="#7a5230" rx={2} />
+      <ellipse cx={x} cy={y + 46 * scale} rx={22 * scale} ry={7 * scale} fill="rgba(0,0,0,0.15)" />
+      <rect x={x - 4 * scale} y={y + 10 * scale} width={8 * scale} height={26 * scale} fill="#7a5230" rx={2} />
+      <motion.g
+        style={{ transformOrigin: `${x}px ${pivotY}px` }}
+        animate={{ rotate: [-amplitude, amplitude, -amplitude], scale: [1, 1 + scaleAmp, 1] }}
+        transition={transition}
+      >
         {/* Layered canopy — same overlapping-ellipse technique as Shrub,
             just taller, so a tree reads as hand-drawn vector foliage rather
             than a flat emoji glyph. */}
@@ -79,28 +93,76 @@ export function Scarecrow({ x, y }: { x: number; y: number }) {
 // ── Decoration area: a real flower bed — a mulch patch with a tight
 // cluster of blooms — instead of individual flowers floating over grass. ──
 const BED_FLOWERS = [
-  { dx: -15, dy: -5, size: 13, emoji: '🌷' }, { dx: -1, dy: -7, size: 12, emoji: '🌼' }, { dx: 14, dy: -5, size: 13, emoji: '🌸' },
-  { dx: -10, dy: 5, size: 11, emoji: '🌼' }, { dx: 5, dy: 6, size: 12, emoji: '🌷' }, { dx: 17, dy: 3, size: 11, emoji: '🌸' },
+  { dx: -18, dy: -6, size: 20, emoji: '🌷' }, { dx: -1, dy: -9, size: 19, emoji: '🌼' }, { dx: 17, dy: -6, size: 20, emoji: '🌸' },
+  { dx: -12, dy: 7, size: 17, emoji: '🌼' }, { dx: 6, dy: 8, size: 19, emoji: '🌷' }, { dx: 21, dy: 4, size: 17, emoji: '🌺' },
 ];
 
 export function FlowerBed({ x, y, scale = 1 }: { x: number; y: number; scale?: number }) {
   return (
     <g style={{ transformOrigin: `${x}px ${y}px`, transform: `scale(${scale})` }}>
-      <ellipse cx={x} cy={y + 9} rx={34} ry={13} fill="rgba(15,40,20,0.2)" />
-      <ellipse cx={x} cy={y} rx={32} ry={12} fill="#6b4a2e" />
-      <ellipse cx={x} cy={y - 1} rx={27} ry={9.5} fill="#5a8f42" opacity={0.65} />
-      {BED_FLOWERS.map((f, i) => (
-        <motion.text
-          key={i} x={x + f.dx} y={y + f.dy} fontSize={f.size} textAnchor="middle" style={{ userSelect: 'none' }}
-          animate={{ rotate: [-4, 4, -4] }} transition={{ duration: 3 + (i % 3), repeat: Infinity, ease: 'easeInOut' }}
-        >{f.emoji}</motion.text>
-      ))}
+      <ellipse cx={x} cy={y + 10} rx={38} ry={14} fill="rgba(15,40,20,0.2)" />
+      <ellipse cx={x} cy={y} rx={36} ry={13} fill="#6b4a2e" />
+      <ellipse cx={x} cy={y - 1} rx={30} ry={10} fill="#5a8f42" opacity={0.65} />
+      {BED_FLOWERS.map((f, i) => {
+        // Seeded on this bed's position + the flower's index within it, so
+        // no two beds bob in the same phase and no two flowers in the same
+        // bed do either.
+        const seed = x * 1.3 + y * 0.7 + i * 17;
+        const transition = ambientLoopTransition(seed, 2.6, 3.8);
+        const flowerY = y + f.dy;
+        const flowerX = x + f.dx;
+        return (
+          <motion.g
+            key={i}
+            animate={{ rotate: [-4, 4, -4], y: [0, -2.2, 0] }}
+            transition={transition}
+            style={{ transformOrigin: `${flowerX}px ${flowerY}px` }}
+          >
+            {/* Leaves peeking out from under the bloom — gives the flower a
+                "planted", layered look instead of a bare emoji floating on
+                mulch. */}
+            <ellipse cx={flowerX - f.size * 0.32} cy={flowerY + f.size * 0.22} rx={f.size * 0.26} ry={f.size * 0.15}
+              fill="#4a8f3e" transform={`rotate(-25 ${flowerX - f.size * 0.32} ${flowerY + f.size * 0.22})`} />
+            <ellipse cx={flowerX + f.size * 0.34} cy={flowerY + f.size * 0.2} rx={f.size * 0.26} ry={f.size * 0.15}
+              fill="#5aa04a" transform={`rotate(25 ${flowerX + f.size * 0.34} ${flowerY + f.size * 0.2})`} />
+            <text x={flowerX} y={flowerY} fontSize={f.size} textAnchor="middle" style={{ userSelect: 'none' }}>{f.emoji}</text>
+          </motion.g>
+        );
+      })}
     </g>
   );
 }
 
-// Butterflies only ever exist near a flower bed, spawn a couple at a time,
-// and are removed from state (not just hidden) after a few seconds.
+// Loose wildflower accents scattered on open lawn — a couple of small blooms
+// growing straight out of the grass, no mulch bed underneath. Distinct from
+// FlowerBed (which is a "planted" bed near the farmhouse/pond); this is for
+// filling in open ground so it doesn't read as empty.
+const TUFT_BLOOMS = [
+  { dx: -6, dy: -2, size: 12, emoji: '🌼' },
+  { dx: 6, dy: 1, size: 11, emoji: '🌷' },
+];
+
+export function WildflowerTuft({ x, y }: { x: number; y: number }) {
+  return (
+    <g>
+      <ellipse cx={x} cy={y + 3} rx={13} ry={4.5} fill="rgba(0,0,0,0.08)" />
+      <path d={`M${x - 9},${y + 3} Q${x - 8},${y - 5} ${x - 5},${y + 2}`} stroke="#4a8f3e" strokeWidth={1.6} fill="none" strokeLinecap="round" />
+      <path d={`M${x + 10},${y + 3} Q${x + 9},${y - 6} ${x + 6},${y + 2}`} stroke="#5aa04a" strokeWidth={1.6} fill="none" strokeLinecap="round" />
+      {TUFT_BLOOMS.map((f, i) => {
+        const seed = x * 1.5 + y * 1.1 + i * 23;
+        const transition = ambientLoopTransition(seed, 2.6, 3.8);
+        const flowerY = y + f.dy;
+        return (
+          <motion.text
+            key={i} x={x + f.dx} y={flowerY} fontSize={f.size} textAnchor="middle" style={{ userSelect: 'none' }}
+            animate={{ rotate: [-4, 4, -4], y: [flowerY, flowerY - 1.8, flowerY] }}
+            transition={transition}
+          >{f.emoji}</motion.text>
+        );
+      })}
+    </g>
+  );
+}
 export function TransientButterflies({ x, y }: { x: number; y: number }) {
   const [flies, setFlies] = useState<{ id: number; dx: number; dy: number }[]>([]);
   const idRef = useRef(0);
@@ -187,12 +249,12 @@ export function Barrel({ x, y }: { x: number; y: number }) {
 }
 
 // ── Nature area: rocks and shrubs sitting directly on the lawn ──
-export function RockCluster({ x, y }: { x: number; y: number }) {
+export function RockCluster({ x, y, scale = 1 }: { x: number; y: number; scale?: number }) {
   const rocks = [
     { dx: -10, dy: 0, r: 7, c: '#9b9186' }, { dx: 7, dy: 3, r: 5.2, c: '#847a70' }, { dx: -1, dy: -5, r: 4.4, c: '#a89e93' },
   ];
   return (
-    <g>
+    <g style={{ transformOrigin: `${x}px ${y}px`, transform: `scale(${scale})` }}>
       <ellipse cx={x} cy={y + 6} rx={20} ry={6} fill="rgba(0,0,0,0.16)" />
       {rocks.map((r, i) => (
         <ellipse key={i} cx={x + r.dx} cy={y + r.dy} rx={r.r} ry={r.r * 0.75} fill={r.c} stroke="rgba(0,0,0,0.22)" strokeWidth={0.6} />

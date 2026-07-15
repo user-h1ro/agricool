@@ -47,7 +47,13 @@ export default function NotificationBell({ notifications, unreadCount, onSelect,
         aria-haspopup="true"
         aria-expanded={open}
       >
-        🔔
+        <motion.span
+          style={{ display: 'inline-block' }}
+          animate={unreadCount > 0 ? { rotate: [0, -12, 10, -8, 4, 0] } : { rotate: 0 }}
+          transition={unreadCount > 0 ? { duration: 0.6, repeat: Infinity, repeatDelay: 2.6, ease: 'easeInOut' } : { duration: 0.2 }}
+        >
+          🔔
+        </motion.span>
         {unreadCount > 0 && (
           <span className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-red-500 px-1 text-[9px] font-bold text-white">
             {unreadCount > 9 ? '9+' : unreadCount}

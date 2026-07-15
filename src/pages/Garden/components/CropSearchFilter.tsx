@@ -1,3 +1,4 @@
+import { motion } from 'framer-motion';
 import { CROP_FILTERS, CropFilterId } from './dashboard/dashboardHelpers';
 
 interface CropSearchFilterProps {
@@ -22,15 +23,19 @@ export default function CropSearchFilter({
       <span className="mr-1 flex-shrink-0 text-[11px] font-bold uppercase tracking-wide text-garden-500">🔍 Filter</span>
 
       {CROP_FILTERS.map(f => (
-        <button
+        <motion.button
           key={f.id}
+          whileHover={{ scale: 1.05, backgroundColor: statusFilter === f.id ? '#16a34a' : '#dcfce7' }}
+          whileTap={{ scale: 0.95 }}
           onClick={() => onChangeStatus(statusFilter === f.id ? null : f.id)}
-          className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${
-            statusFilter === f.id ? 'bg-garden-600 text-white' : 'bg-garden-50 text-garden-700 hover:bg-garden-100'
+          animate={{ backgroundColor: statusFilter === f.id ? '#16a34a' : '#f0fdf4' }}
+          transition={{ duration: 0.18 }}
+          className={`rounded-full px-3 py-1.5 text-xs font-bold ${
+            statusFilter === f.id ? 'text-white' : 'text-garden-700'
           }`}
         >
           {f.icon} {f.label}
-        </button>
+        </motion.button>
       ))}
 
       <select
